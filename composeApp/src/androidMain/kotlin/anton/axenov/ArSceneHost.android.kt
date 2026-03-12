@@ -165,7 +165,7 @@ actual fun ArSceneHost(
     }
     val zoneDetector = remember { DetectInterestZones() }
     var arSceneView by remember { mutableStateOf<ARSceneView?>(null) }
-    var latestZoneAnchorNode by remember { mutableStateOf<AnchorNode?>(null) }
+    val placedZoneAnchorNodes = remember { mutableListOf<AnchorNode>() }
     var detectionJob by remember { mutableStateOf<Job?>(null) }
     var lastDetectionAtMs by remember { mutableStateOf(0L) }
     var lastCaptureFailureAtMs by remember { mutableStateOf(0L) }
@@ -176,7 +176,12 @@ actual fun ArSceneHost(
     DisposableEffect(Unit) {
         onDispose {
             detectionJob?.cancel()
-            latestZoneAnchorNode?.destroy()
+            val sceneView = arSceneView
+            placedZoneAnchorNodes.forEach { node ->
+                sceneView?.removeChildNode(node)
+                node.destroy()
+            }
+            placedZoneAnchorNodes.clear()
             coroutineScope.cancel()
         }
     }
@@ -252,11 +257,7 @@ actual fun ArSceneHost(
                                         zone = zone,
                                     )
                                     if (placementResult.anchorNode != null) {
-                                        latestZoneAnchorNode?.let { oldNode ->
-                                            sceneView.removeChildNode(oldNode)
-                                            oldNode.destroy()
-                                        }
-                                        latestZoneAnchorNode = placementResult.anchorNode
+                                        placedZoneAnchorNodes += placementResult.anchorNode
                                         statusReporter.report(
                                             "Zone placed using ${placementResult.strategy.name} from frame ts=${snapshot.frameTimestamp}. " +
                                                 placementResult.details,
@@ -281,9 +282,8 @@ actual fun ArSceneHost(
 
                 if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
                     lastStatusAtMs = now
-                    val anchorState = latestZoneAnchorNode?.trackingState?.name ?: "NULL"
                     statusReporter.report(
-                        "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zoneAnchor=$anchorState",
+                        "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${placedZoneAnchorNodes.size}",
                     )
                 }
             },

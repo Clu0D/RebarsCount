@@ -10,6 +10,7 @@ import dev.romainguy.kotlin.math.Float3
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.node.CubeNode
+import kotlin.math.sqrt
 import kotlin.math.roundToInt
 import kotlin.random.Random
 import androidx.core.graphics.createBitmap
@@ -273,7 +274,7 @@ fun placeBoundingBoxInWorld(
     zone: DetectedInterestZone,
 ): BoundingBoxPlacementResult {
     val depthProjectionAttempt = projectBoundingBoxCenterToWorld(snapshot, zone.boundingBox)
-    if (depthProjectionAttempt.worldPoint != null) {
+    if (depthProjectionAttempt.worldPose != null) {
         val session = sceneView.session
         if (session == null) {
             return BoundingBoxPlacementResult(
@@ -283,17 +284,24 @@ fun placeBoundingBoxInWorld(
             )
         }
         val anchor = session.createAnchor(
-            Pose.makeTranslation(
-                depthProjectionAttempt.worldPoint[0],
-                depthProjectionAttempt.worldPoint[1],
-                depthProjectionAttempt.worldPoint[2],
-            ),
+            depthProjectionAttempt.worldPose,
         )
-        val anchorNode = createMarkerAnchorNode(sceneView, anchor)
+        val rectangleSize = computeRectanglePhysicalSize(
+            boundingBox = zone.boundingBox,
+            depthMeters = depthProjectionAttempt.depthMeters,
+            snapshot = snapshot,
+        )
+        val anchorNode = createBoundingBoxAnchorNode(
+            sceneView = sceneView,
+            anchor = anchor,
+            rectangleWidthMeters = rectangleSize.first,
+            rectangleHeightMeters = rectangleSize.second,
+        )
         return BoundingBoxPlacementResult(
             anchorNode = anchorNode,
             strategy = PlacementStrategy.DEPTH_SNAPSHOT,
-            details = "Depth snapshot placement successful. ${depthProjectionAttempt.details}",
+            details = "Depth snapshot placement successful. ${depthProjectionAttempt.details}. " +
+                    "Rectangle size(m)=(${rectangleSize.first}, ${rectangleSize.second})",
         )
     }
 
@@ -316,14 +324,33 @@ fun placeBoundingBoxInWorld(
         ),
     )
     if (planeHit != null) {
-        val anchorNode = createMarkerAnchorNode(sceneView, planeHit.createAnchor())
+        val fallbackDepthMeters = estimateDistanceToCurrentCamera(sceneView, planeHit.hitPose)
+        val rectangleSize = computeRectanglePhysicalSize(
+            boundingBox = zone.boundingBox,
+            depthMeters = fallbackDepthMeters,
+            snapshot = snapshot,
+        )
+        val cameraRotation = sceneView.frame?.camera?.pose?.rotationQuaternion
+            ?: snapshot.cameraPose.rotationQuaternion
+        val anchorPose = Pose(
+            planeHit.hitPose.translation,
+            cameraRotation,
+        )
+        val anchorNode = createBoundingBoxAnchorNode(
+            sceneView = sceneView,
+            anchor = sceneView.session?.createAnchor(anchorPose) ?: planeHit.createAnchor(),
+            rectangleWidthMeters = rectangleSize.first,
+            rectangleHeightMeters = rectangleSize.second,
+        )
         return BoundingBoxPlacementResult(
             anchorNode = anchorNode,
             strategy = PlacementStrategy.PLANE_HIT,
             details =
                 "Depth failed. ${depthProjectionAttempt.details}. " +
-                    "Fallback plane hit succeeded at view(${hitTestCoordinates.first.toInt()}, ${hitTestCoordinates.second.toInt()}). " +
-                    "Note: fallback hit uses current frame, not captured frame ${snapshot.frameTimestamp}.",
+                "Fallback plane hit succeeded at view(${hitTestCoordinates.first.toInt()}, ${hitTestCoordinates.second.toInt()}). " +
+                "Estimated depth=${fallbackDepthMeters ?: -1f}m, " +
+                "rectangle(m)=(${rectangleSize.first}, ${rectangleSize.second}). " +
+                "Note: fallback hit uses current frame, not captured frame ${snapshot.frameTimestamp}.",
         )
     }
 
@@ -334,14 +361,33 @@ fun placeBoundingBoxInWorld(
         depthPoint = false,
     )
     if (featurePointHit != null) {
-        val anchorNode = createMarkerAnchorNode(sceneView, featurePointHit.createAnchor())
+        val fallbackDepthMeters = estimateDistanceToCurrentCamera(sceneView, featurePointHit.hitPose)
+        val rectangleSize = computeRectanglePhysicalSize(
+            boundingBox = zone.boundingBox,
+            depthMeters = fallbackDepthMeters,
+            snapshot = snapshot,
+        )
+        val cameraRotation = sceneView.frame?.camera?.pose?.rotationQuaternion
+            ?: snapshot.cameraPose.rotationQuaternion
+        val anchorPose = Pose(
+            featurePointHit.hitPose.translation,
+            cameraRotation,
+        )
+        val anchorNode = createBoundingBoxAnchorNode(
+            sceneView = sceneView,
+            anchor = sceneView.session?.createAnchor(anchorPose) ?: featurePointHit.createAnchor(),
+            rectangleWidthMeters = rectangleSize.first,
+            rectangleHeightMeters = rectangleSize.second,
+        )
         return BoundingBoxPlacementResult(
             anchorNode = anchorNode,
             strategy = PlacementStrategy.FEATURE_POINT_HIT,
             details =
                 "Depth and plane fallback failed. " +
-                    "Feature/depth-point hit succeeded at view(${hitTestCoordinates.first.toInt()}, ${hitTestCoordinates.second.toInt()}). " +
-                    "Note: fallback hit uses current frame, not captured frame ${snapshot.frameTimestamp}.",
+                "Feature/depth-point hit succeeded at view(${hitTestCoordinates.first.toInt()}, ${hitTestCoordinates.second.toInt()}). " +
+                "Estimated depth=${fallbackDepthMeters ?: -1f}m, " +
+                "rectangle(m)=(${rectangleSize.first}, ${rectangleSize.second}). " +
+                "Note: fallback hit uses current frame, not captured frame ${snapshot.frameTimestamp}.",
         )
     }
 
@@ -432,7 +478,8 @@ private fun projectBoundingBoxCenterToWorld(
     val depthSample = sampleDepthMeters(snapshot, imageX, imageY)
     val depthMeters = depthSample.depthMeters
         ?: return DepthProjectionAttempt(
-            worldPoint = null,
+            worldPose = null,
+            depthMeters = null,
             details = "Depth sample is unavailable at image($imageX, $imageY). ${depthSample.details}",
         )
 
@@ -442,10 +489,11 @@ private fun projectBoundingBoxCenterToWorld(
     val zCamera = -depthMeters
 
     return DepthProjectionAttempt(
-        worldPoint = snapshot.cameraPose.transformPoint(floatArrayOf(xCamera, yCamera, zCamera)),
+        worldPose = snapshot.cameraPose.compose(Pose.makeTranslation(xCamera, yCamera, zCamera)),
+        depthMeters = depthMeters,
         details =
             "Depth sample: ${depthSample.details}. " +
-                "Camera point=($xCamera, $yCamera, $zCamera).",
+            "Camera point=($xCamera, $yCamera, $zCamera).",
     )
 }
 
@@ -560,16 +608,44 @@ private fun mapBoundingBoxCenterToSceneView(
  * @param anchor anchor to attach marker node to.
  * @return created anchor node.
  */
-private fun createMarkerAnchorNode(
+private fun createBoundingBoxAnchorNode(
     sceneView: ARSceneView,
     anchor: com.google.ar.core.Anchor,
+    rectangleWidthMeters: Float,
+    rectangleHeightMeters: Float,
 ): AnchorNode {
     val anchorNode = AnchorNode(sceneView.engine, anchor)
-    val markerNode = CubeNode(
+    val halfWidth = rectangleWidthMeters / 2f
+    val halfHeight = rectangleHeightMeters / 2f
+    val lineThickness = (rectangleWidthMeters.coerceAtMost(rectangleHeightMeters) * RECTANGLE_LINE_THICKNESS_FACTOR)
+        .coerceAtLeast(RECTANGLE_LINE_MIN_THICKNESS_METERS)
+        .coerceAtMost(RECTANGLE_LINE_MAX_THICKNESS_METERS)
+
+    val topEdge = CubeNode(
         engine = sceneView.engine,
-        size = Float3(0.12f, 0.12f, 0.12f),
+        size = Float3(rectangleWidthMeters, lineThickness, lineThickness),
     )
-    anchorNode.addChildNode(markerNode)
+    topEdge.position = Float3(0f, halfHeight, 0f)
+    val bottomEdge = CubeNode(
+        engine = sceneView.engine,
+        size = Float3(rectangleWidthMeters, lineThickness, lineThickness),
+    )
+    bottomEdge.position = Float3(0f, -halfHeight, 0f)
+    val leftEdge = CubeNode(
+        engine = sceneView.engine,
+        size = Float3(lineThickness, rectangleHeightMeters, lineThickness),
+    )
+    leftEdge.position = Float3(-halfWidth, 0f, 0f)
+    val rightEdge = CubeNode(
+        engine = sceneView.engine,
+        size = Float3(lineThickness, rectangleHeightMeters, lineThickness),
+    )
+    rightEdge.position = Float3(halfWidth, 0f, 0f)
+
+    anchorNode.addChildNode(topEdge)
+    anchorNode.addChildNode(bottomEdge)
+    anchorNode.addChildNode(leftEdge)
+    anchorNode.addChildNode(rightEdge)
     sceneView.addChildNode(anchorNode)
     return anchorNode
 }
@@ -577,11 +653,13 @@ private fun createMarkerAnchorNode(
 /**
  * Result of 2D-to-3D depth projection for a bounding-box center.
  *
- * @param worldPoint projected world point or null when projection failed.
+ * @param worldPose projected world pose or null when projection failed.
+ * @param depthMeters projected depth in meters.
  * @param details detailed projection diagnostics.
  */
 private data class DepthProjectionAttempt(
-    val worldPoint: FloatArray?,
+    val worldPose: Pose?,
+    val depthMeters: Float?,
     val details: String,
 )
 
@@ -595,6 +673,49 @@ private data class DepthSampleAttempt(
     val depthMeters: Float?,
     val details: String,
 )
+
+/**
+ * Computes rectangle physical size in meters from pixel bounding-box and depth.
+ *
+ * @param boundingBox detected bounding box in image pixels.
+ * @param depthMeters distance from camera in meters.
+ * @param snapshot frame snapshot with intrinsics.
+ * @return pair `(widthMeters, heightMeters)`.
+ */
+private fun computeRectanglePhysicalSize(
+    boundingBox: BoundingBox,
+    depthMeters: Float?,
+    snapshot: DetectionFrameSnapshot,
+): Pair<Float, Float> {
+    val safeDepth = (depthMeters ?: DEFAULT_FALLBACK_DEPTH_METERS)
+        .coerceIn(MIN_RECTANGLE_DEPTH_METERS, MAX_RECTANGLE_DEPTH_METERS)
+    val boxWidthPx = (boundingBox.right - boundingBox.left).coerceAtLeast(1)
+    val boxHeightPx = (boundingBox.bottom - boundingBox.top).coerceAtLeast(1)
+    val widthMeters = (boxWidthPx / snapshot.focalLengthX) * safeDepth
+    val heightMeters = (boxHeightPx / snapshot.focalLengthY) * safeDepth
+    return Pair(
+        first = widthMeters.coerceIn(MIN_RECTANGLE_SIZE_METERS, MAX_RECTANGLE_SIZE_METERS),
+        second = heightMeters.coerceIn(MIN_RECTANGLE_SIZE_METERS, MAX_RECTANGLE_SIZE_METERS),
+    )
+}
+
+/**
+ * Estimates distance in meters from current camera pose to a hit pose.
+ *
+ * @param sceneView active scene view.
+ * @param hitPose hit pose.
+ * @return Euclidean distance in meters or null if current frame is unavailable.
+ */
+private fun estimateDistanceToCurrentCamera(
+    sceneView: ARSceneView,
+    hitPose: Pose,
+): Float? {
+    val cameraPose = sceneView.frame?.camera?.pose ?: return null
+    val dx = hitPose.tx() - cameraPose.tx()
+    val dy = hitPose.ty() - cameraPose.ty()
+    val dz = hitPose.tz() - cameraPose.tz()
+    return sqrt(dx * dx + dy * dy + dz * dz)
+}
 
 /**
  * Returns a random float inside inclusive range.
@@ -612,3 +733,11 @@ private const val DEPTH16_CONFIDENCE_MASK = 0xE000
 private const val DEPTH16_CONFIDENCE_SHIFT = 13
 private const val MILLIMETERS_IN_METER = 1000f
 private const val DEPTH_SAMPLE_RADIUS_PX = 4
+private const val MIN_RECTANGLE_SIZE_METERS = 0.03f
+private const val MAX_RECTANGLE_SIZE_METERS = 5.0f
+private const val MIN_RECTANGLE_DEPTH_METERS = 0.1f
+private const val MAX_RECTANGLE_DEPTH_METERS = 20.0f
+private const val DEFAULT_FALLBACK_DEPTH_METERS = 1.5f
+private const val RECTANGLE_LINE_THICKNESS_FACTOR = 0.02f
+private const val RECTANGLE_LINE_MIN_THICKNESS_METERS = 0.003f
+private const val RECTANGLE_LINE_MAX_THICKNESS_METERS = 0.03f
