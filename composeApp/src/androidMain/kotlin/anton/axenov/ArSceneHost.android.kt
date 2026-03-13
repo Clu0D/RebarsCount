@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -43,16 +44,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.TrackingFailureReason
-import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
-import io.github.sceneview.ar.ARSceneView
-import io.github.sceneview.ar.node.AnchorNode
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Renders Android AR sample content.
@@ -85,16 +79,14 @@ actual fun ArSceneHost(
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasCameraPermission = context.hasCameraPermission()
                 if (hasCameraPermission) {
-                    val setupResult = refreshArCoreSetup(
+                    refreshAndApplyArCoreSetup(
                         context = context,
                         activity = activity,
                         requestInstallIfNeeded = !arCoreInstallRequested,
+                        onReadyChanged = { isArReady = it },
+                        onStatusChanged = { arSetupStatus = it },
+                        onInstallRequested = { arCoreInstallRequested = true },
                     )
-                    isArReady = setupResult.isReady
-                    arSetupStatus = setupResult.message
-                    if (setupResult.installRequested) {
-                        arCoreInstallRequested = true
-                    }
                 }
             }
         }
@@ -111,16 +103,14 @@ actual fun ArSceneHost(
         }
         hasCameraPermission = context.hasCameraPermission()
         if (hasCameraPermission) {
-            val setupResult = refreshArCoreSetup(
+            refreshAndApplyArCoreSetup(
                 context = context,
                 activity = activity,
                 requestInstallIfNeeded = !arCoreInstallRequested,
+                onReadyChanged = { isArReady = it },
+                onStatusChanged = { arSetupStatus = it },
+                onInstallRequested = { arCoreInstallRequested = true },
             )
-            isArReady = setupResult.isReady
-            arSetupStatus = setupResult.message
-            if (setupResult.installRequested) {
-                arCoreInstallRequested = true
-            }
         }
     }
 
@@ -141,16 +131,14 @@ actual fun ArSceneHost(
             horizontalAlignment = horizontalAlignment,
             statusText = arSetupStatus,
             onRetry = {
-                val setupResult = refreshArCoreSetup(
+                refreshAndApplyArCoreSetup(
                     context = context,
                     activity = activity,
                     requestInstallIfNeeded = true,
+                    onReadyChanged = { isArReady = it },
+                    onStatusChanged = { arSetupStatus = it },
+                    onInstallRequested = { arCoreInstallRequested = true },
                 )
-                isArReady = setupResult.isReady
-                arSetupStatus = setupResult.message
-                if (setupResult.installRequested) {
-                    arCoreInstallRequested = true
-                }
             },
         )
         return
@@ -163,25 +151,16 @@ actual fun ArSceneHost(
             debugText = debugMessage
         }
     }
-    val zoneDetector = remember { DetectInterestZones() }
-    var arSceneView by remember { mutableStateOf<ARSceneView?>(null) }
-    val placedZoneAnchorNodes = remember { mutableListOf<AnchorNode>() }
-    var detectionJob by remember { mutableStateOf<Job?>(null) }
-    var lastDetectionAtMs by remember { mutableStateOf(0L) }
-    var lastCaptureFailureAtMs by remember { mutableStateOf(0L) }
-    var asyncPlacementNoticeShown by remember { mutableStateOf(false) }
-    var lastTrackingState by remember { mutableStateOf<TrackingState?>(null) }
-    var lastStatusAtMs by remember { mutableStateOf(0L) }
+    val detectionPipeline = remember(coroutineScope, statusReporter) {
+        ArDetectionPipeline(
+            coroutineScope = coroutineScope,
+            reportStatus = { message, force -> statusReporter.report(message, force) },
+        )
+    }
 
     DisposableEffect(Unit) {
         onDispose {
-            detectionJob?.cancel()
-            val sceneView = arSceneView
-            placedZoneAnchorNodes.forEach { node ->
-                sceneView?.removeChildNode(node)
-                node.destroy()
-            }
-            placedZoneAnchorNodes.clear()
+            detectionPipeline.onSceneDisposed()
             coroutineScope.cancel()
         }
     }
@@ -196,7 +175,7 @@ actual fun ArSceneHost(
                 }
             },
             onViewCreated = {
-                arSceneView = this
+                detectionPipeline.onSceneCreated(this)
                 statusReporter.report("AR view created (SceneView)")
             },
             onSessionCreated = {
@@ -216,76 +195,8 @@ actual fun ArSceneHost(
                     statusReporter.report("Camera tracking failure: ${reason.name}", force = true)
                 }
             },
-            onSessionUpdated = { session, frame ->
-                if (!asyncPlacementNoticeShown) {
-                    asyncPlacementNoticeShown = true
-                    statusReporter.report(
-                        "Async placement uses captured frame depth snapshot; deferred ARCore hitTest on old frames is not reliable.",
-                        force = true,
-                    )
-                }
-                val trackingState = frame.camera.trackingState
-                if (trackingState != lastTrackingState) {
-                    lastTrackingState = trackingState
-                    statusReporter.report("Camera tracking=${trackingState.name}", force = true)
-                }
-
-                val now = SystemClock.elapsedRealtime()
-                if (
-                    trackingState == TrackingState.TRACKING &&
-                    now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
-                    detectionJob?.isActive != true
-                ) {
-                    val captureResult = captureDetectionFrameSnapshot(frame)
-                    val snapshot = captureResult.snapshot
-                    if (snapshot != null) {
-                        lastDetectionAtMs = now
-                        val sceneView = arSceneView ?: return@ARScene
-                        detectionJob = coroutineScope.launch(Dispatchers.Default) {
-                            try {
-                                val detectedZones = zoneDetector.detectZones(snapshot.screenshot)
-                                withContext(Dispatchers.Main.immediate) {
-                                    val zone = detectedZones.firstOrNull()
-                                    if (zone == null) {
-                                        statusReporter.report("No interest zones detected")
-                                        return@withContext
-                                    }
-
-                                    val placementResult = placeBoundingBoxInWorld(
-                                        sceneView = sceneView,
-                                        snapshot = snapshot,
-                                        zone = zone,
-                                    )
-                                    if (placementResult.anchorNode != null) {
-                                        placedZoneAnchorNodes += placementResult.anchorNode
-                                        statusReporter.report(
-                                            "Zone placed using ${placementResult.strategy.name} from frame ts=${snapshot.frameTimestamp}. " +
-                                                placementResult.details,
-                                            force = true,
-                                        )
-                                    } else {
-                                        statusReporter.report(
-                                            "Zone placement failed. ${placementResult.details}",
-                                            force = true,
-                                        )
-                                    }
-                                }
-                            } finally {
-                                snapshot.screenshot.recycle()
-                            }
-                        }
-                    } else if (now - lastCaptureFailureAtMs >= CAPTURE_FAILURE_REPORT_INTERVAL_MS) {
-                        lastCaptureFailureAtMs = now
-                        statusReporter.report("Detection snapshot skipped: ${captureResult.details}")
-                    }
-                }
-
-                if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
-                    lastStatusAtMs = now
-                    statusReporter.report(
-                        "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${placedZoneAnchorNodes.size}",
-                    )
-                }
+            onSessionUpdated = { _, frame ->
+                detectionPipeline.onSessionUpdated(frame)
             },
         )
         Text(
@@ -327,6 +238,58 @@ private fun refreshArCoreSetup(
 }
 
 /**
+ * Executes ARCore setup refresh and applies returned state through provided callbacks.
+ *
+ * @param context Android context.
+ * @param activity host activity.
+ * @param requestInstallIfNeeded true when install dialog can be shown.
+ * @param onReadyChanged callback that receives setup readiness.
+ * @param onStatusChanged callback that receives user-visible setup status.
+ * @param onInstallRequested callback invoked when install flow was requested.
+ */
+private fun refreshAndApplyArCoreSetup(
+    context: Context,
+    activity: Activity?,
+    requestInstallIfNeeded: Boolean,
+    onReadyChanged: (Boolean) -> Unit,
+    onStatusChanged: (String) -> Unit,
+    onInstallRequested: () -> Unit,
+) {
+    val setupResult = refreshArCoreSetup(
+        context = context,
+        activity = activity,
+        requestInstallIfNeeded = requestInstallIfNeeded,
+    )
+    applyArCoreSetupResult(
+        setupResult = setupResult,
+        onReadyChanged = onReadyChanged,
+        onStatusChanged = onStatusChanged,
+        onInstallRequested = onInstallRequested,
+    )
+}
+
+/**
+ * Applies one ARCore setup result to UI state callbacks.
+ *
+ * @param setupResult setup result to apply.
+ * @param onReadyChanged callback that receives setup readiness.
+ * @param onStatusChanged callback that receives user-visible setup status.
+ * @param onInstallRequested callback invoked when install flow was requested.
+ */
+private fun applyArCoreSetupResult(
+    setupResult: ArCoreSetupResult,
+    onReadyChanged: (Boolean) -> Unit,
+    onStatusChanged: (String) -> Unit,
+    onInstallRequested: () -> Unit,
+) {
+    onReadyChanged(setupResult.isReady)
+    onStatusChanged(setupResult.message)
+    if (setupResult.installRequested) {
+        onInstallRequested()
+    }
+}
+
+/**
  * Shows permission controls and retry actions when camera access is missing.
  *
  * @param modifier root layout modifier.
@@ -343,10 +306,9 @@ private fun PermissionRequestContent(
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    Column(
+    CenteredContentColumn(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = horizontalAlignment,
-        verticalArrangement = Arrangement.Center,
     ) {
         Text("Camera permission is required for AR rendering.")
         Button(onClick = onRequestPermission) {
@@ -429,10 +391,9 @@ private fun ArSetupContent(
     statusText: String,
     onRetry: () -> Unit,
 ) {
-    Column(
+    CenteredContentColumn(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = horizontalAlignment,
-        verticalArrangement = Arrangement.Center,
     ) {
         Text("AR setup is required.")
         Text(statusText)
@@ -440,6 +401,27 @@ private fun ArSetupContent(
             Text("Retry AR Setup")
         }
     }
+}
+
+/**
+ * Renders a vertically centered column used by permission/setup fallback screens.
+ *
+ * @param modifier root layout modifier.
+ * @param horizontalAlignment horizontal alignment for children.
+ * @param content composable children rendered inside centered column.
+ */
+@Composable
+private fun CenteredContentColumn(
+    modifier: Modifier,
+    horizontalAlignment: Alignment.Horizontal,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        horizontalAlignment = horizontalAlignment,
+        verticalArrangement = Arrangement.Center,
+        content = content,
+    )
 }
 
 /**
@@ -546,7 +528,4 @@ private data class ArCoreSetupResult(
     val message: String,
 )
 
-private const val DETECTION_INTERVAL_MS = 350L
-private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L
-private const val FRAME_STATUS_INTERVAL_MS = 1000L
-private const val STATUS_REPEAT_COOLDOWN_MS = 800L
+private const val STATUS_REPEAT_COOLDOWN_MS = 1000L
