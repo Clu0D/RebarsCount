@@ -23,10 +23,12 @@ class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(),
+    private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
-    private val placedZoneAnchorNodes = mutableListOf<AnchorNode>()
+    private val placedSceneNodes = mutableListOf<AnchorNode>()
+    private var placedZoneCount = 0
     private var detectionJob: Job? = null
     private var lastDetectionAtMs = 0L
     private var lastCaptureFailureAtMs = 0L
@@ -52,10 +54,11 @@ class ArDetectionPipeline(
         isSceneActive.set(false)
         detectionJob?.cancel()
         sceneView = null
-        placedZoneAnchorNodes.forEach { node ->
+        placedSceneNodes.forEach { node ->
             runCatching { node.destroy() }
         }
-        placedZoneAnchorNodes.clear()
+        placedSceneNodes.clear()
+        placedZoneCount = 0
     }
 
     /**
@@ -106,6 +109,7 @@ class ArDetectionPipeline(
                                 reportStatus("No interest zones detected", false)
                                 return@withContext
                             }
+                            onZonesDetected(snapshot, detectedZones)
                             if (!isSceneActive.get() || sceneView !== activeSceneView) {
                                 reportStatus(
                                     "Zone placement skipped: scene was recreated/disposed during async detection.",
@@ -132,14 +136,18 @@ class ArDetectionPipeline(
                                 }.getOrElse { error ->
                                     BoundingBoxPlacementResult(
                                         anchorNode = null,
+                                        pointNodes = emptyList(),
                                         strategy = PlacementStrategy.FAILED,
                                         details =
                                             "Placement aborted: ${error.javaClass.simpleName}: " +
                                                 (error.message ?: "unknown error"),
                                     )
                                 }
-                                if (placementResult.anchorNode != null) {
-                                    placedZoneAnchorNodes += placementResult.anchorNode
+                                if (placementResult.placedNodes.isNotEmpty()) {
+                                    placedSceneNodes += placementResult.placedNodes
+                                    if (placementResult.anchorNode != null) {
+                                        placedZoneCount++
+                                    }
                                     reportStatus(
                                         "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.strategy.name} " +
                                             "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
@@ -170,13 +178,13 @@ class ArDetectionPipeline(
         if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
             lastStatusAtMs = now
             reportStatus(
-                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${placedZoneAnchorNodes.size}",
+                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=$placedZoneCount, sceneNodes=${placedSceneNodes.size}",
                 false,
             )
         }
     }
 }
 
-private const val DETECTION_INTERVAL_MS = 500L
+private const val DETECTION_INTERVAL_MS = 10000L
 private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L
 private const val FRAME_STATUS_INTERVAL_MS = 1000L

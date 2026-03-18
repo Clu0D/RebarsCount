@@ -1,5 +1,6 @@
 package anton.axenov
 
+import com.google.ar.core.Anchor
 import com.google.ar.core.Plane
 import com.google.ar.core.Pose
 import io.github.sceneview.ar.ARSceneView
@@ -39,6 +40,7 @@ fun placeBoundingBoxInWorld(
             snapshot = snapshot,
             zone = zone,
             pose = depthProjectionAttempt.worldPose,
+            worldPoints = depthProjectionAttempt.worldPoints,
             depthMeters = depthProjectionAttempt.depthMeters,
             strategy = PlacementStrategy.DEPTH_SNAPSHOT,
             sessionNullDetails = "Depth projection succeeded, but AR session is null",
@@ -133,6 +135,7 @@ fun placeBoundingBoxInWorld(
 private fun failedPlacement(details: String): BoundingBoxPlacementResult {
     return BoundingBoxPlacementResult(
         anchorNode = null,
+        pointNodes = emptyList(),
         strategy = PlacementStrategy.FAILED,
         details = details,
     )
@@ -204,6 +207,7 @@ private fun placeFromFallbackHitPoints(
         snapshot = snapshot,
         zone = zone,
         pose = pose,
+        worldPoints = hitPoints,
         depthMeters = planePoseAttempt.depthMeters,
         strategy = strategy,
         sessionNullDetails = sessionNullDetails,
@@ -233,6 +237,7 @@ private fun placeFromPose(
     snapshot: DetectionFrameSnapshot,
     zone: DetectedInterestZone,
     pose: Pose,
+    worldPoints: List<Vector3>,
     depthMeters: Float?,
     strategy: PlacementStrategy,
     sessionNullDetails: String,
@@ -251,68 +256,25 @@ private fun placeFromPose(
         maxDepthMeters = MAX_RECTANGLE_DEPTH_METERS,
         defaultDepthMeters = DEFAULT_FALLBACK_DEPTH_METERS,
     )
-    val anchorNode = createBoundingBoxAnchorNode(
+    val anchorNode = createRectangleMarkerAnchorNode(
         sceneView = sceneView,
         anchor = anchor,
         rectangleWidthMeters = rectangleSize.first,
         rectangleHeightMeters = rectangleSize.second,
     )
+    val pointNodes = createWorldPointMarkerNodes(
+        sceneView = sceneView,
+        worldPoints = worldPoints,
+    )
     return BoundingBoxPlacementResult(
         anchorNode = anchorNode,
+        pointNodes = pointNodes,
         strategy = strategy,
         details =
             "$successDetailsPrefix " +
-                    "Rectangle size(m)=(${rectangleSize.first}, ${rectangleSize.second})",
+                    "Rectangle size(m)=(${rectangleSize.first}, ${rectangleSize.second}), " +
+                    "renderedPoints=${pointNodes.size}",
     )
-}
-
-/**
- * Creates a marker anchor node and adds it to the scene.
- *
- * @param sceneView active SceneView.
- * @param anchor anchor to attach marker node to.
- * @return created anchor node.
- */
-private fun createBoundingBoxAnchorNode(
-    sceneView: ARSceneView,
-    anchor: com.google.ar.core.Anchor,
-    rectangleWidthMeters: Float,
-    rectangleHeightMeters: Float,
-): AnchorNode {
-    val anchorNode = AnchorNode(sceneView.engine, anchor)
-    val halfWidth = rectangleWidthMeters / 2f
-    val halfHeight = rectangleHeightMeters / 2f
-    val lineThickness = (rectangleWidthMeters.coerceAtMost(rectangleHeightMeters) * RECTANGLE_LINE_THICKNESS_FACTOR)
-        .coerceAtLeast(RECTANGLE_LINE_MIN_THICKNESS_METERS)
-        .coerceAtMost(RECTANGLE_LINE_MAX_THICKNESS_METERS)
-
-    val topEdge = CubeNode(
-        engine = sceneView.engine,
-        size = dev.romainguy.kotlin.math.Float3(rectangleWidthMeters, lineThickness, lineThickness),
-    )
-    topEdge.position = dev.romainguy.kotlin.math.Float3(0f, halfHeight, 0f)
-    val bottomEdge = CubeNode(
-        engine = sceneView.engine,
-        size = dev.romainguy.kotlin.math.Float3(rectangleWidthMeters, lineThickness, lineThickness),
-    )
-    bottomEdge.position = dev.romainguy.kotlin.math.Float3(0f, -halfHeight, 0f)
-    val leftEdge = CubeNode(
-        engine = sceneView.engine,
-        size = dev.romainguy.kotlin.math.Float3(lineThickness, rectangleHeightMeters, lineThickness),
-    )
-    leftEdge.position = dev.romainguy.kotlin.math.Float3(-halfWidth, 0f, 0f)
-    val rightEdge = CubeNode(
-        engine = sceneView.engine,
-        size = dev.romainguy.kotlin.math.Float3(lineThickness, rectangleHeightMeters, lineThickness),
-    )
-    rightEdge.position = dev.romainguy.kotlin.math.Float3(halfWidth, 0f, 0f)
-
-    anchorNode.addChildNode(topEdge)
-    anchorNode.addChildNode(bottomEdge)
-    anchorNode.addChildNode(leftEdge)
-    anchorNode.addChildNode(rightEdge)
-    sceneView.addChildNode(anchorNode)
-    return anchorNode
 }
 
 /**
@@ -353,6 +315,7 @@ private fun projectBoundingBoxCenterToWorld(
         return DepthProjectionAttempt(
             worldPose = null,
             depthMeters = null,
+            worldPoints = worldPoints,
             details =
                 "Depth points are insufficient: ${worldPoints.size}/${imageSamples.size}. " +
                         "Last failure: $lastFailureDetails",
@@ -368,6 +331,7 @@ private fun projectBoundingBoxCenterToWorld(
         ?: return DepthProjectionAttempt(
             worldPose = null,
             depthMeters = null,
+            worldPoints = worldPoints,
             details =
                 "Depth points=${worldPoints.size}/${imageSamples.size}, " +
                         "plane fit failed: ${planeFit.details}",
@@ -377,6 +341,7 @@ private fun projectBoundingBoxCenterToWorld(
     return DepthProjectionAttempt(
         worldPose = planePose.toArPose(),
         depthMeters = averageDepth,
+        worldPoints = worldPoints,
         details =
             "Depth points=${worldPoints.size}/${imageSamples.size}, failures=$sampleFailures, " +
                     "avgDepth=$averageDepth. Plane fit: ${planeFit.details}",
@@ -585,6 +550,7 @@ private fun PlanePoseData.toArPose(): Pose {
 private data class DepthProjectionAttempt(
     val worldPose: Pose?,
     val depthMeters: Float?,
+    val worldPoints: List<Vector3>,
     val details: String,
 )
 
@@ -625,6 +591,3 @@ private const val MAX_RECTANGLE_SIZE_METERS = 5.0f
 private const val MIN_RECTANGLE_DEPTH_METERS = 0.1f
 private const val MAX_RECTANGLE_DEPTH_METERS = 20.0f
 private const val DEFAULT_FALLBACK_DEPTH_METERS = 1.5f
-private const val RECTANGLE_LINE_THICKNESS_FACTOR = 0.02f
-private const val RECTANGLE_LINE_MIN_THICKNESS_METERS = 0.003f
-private const val RECTANGLE_LINE_MAX_THICKNESS_METERS = 0.03f

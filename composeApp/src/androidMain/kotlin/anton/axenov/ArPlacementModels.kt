@@ -66,6 +66,10 @@ data class DetectionFrameSnapshotCaptureResult(
  */
 data class BoundingBoxPlacementResult(
     val anchorNode: AnchorNode?,
+    val pointNodes: List<AnchorNode> = emptyList(),
     val strategy: PlacementStrategy,
     val details: String,
-)
+) {
+    val placedNodes: List<AnchorNode>
+        get() = listOfNotNull(anchorNode) + pointNodes
+}

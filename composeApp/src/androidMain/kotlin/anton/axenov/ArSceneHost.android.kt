@@ -47,6 +47,7 @@ import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 
 /**
  * Renders Android AR sample content.
@@ -145,22 +146,39 @@ actual fun ArSceneHost(
     }
 
     var debugText by remember { mutableStateOf("AR: waiting for renderer") }
+    val screenOverlayStore = remember { ScreenBoundingBoxOverlayStore() }
+    var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
     val statusReporter = remember {
         SceneStatusReporter { debugMessage ->
             debugText = debugMessage
         }
     }
-    val detectionPipeline = remember(coroutineScope, statusReporter) {
+    val detectionPipeline = remember(coroutineScope, statusReporter, screenOverlayStore) {
         ArDetectionPipeline(
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
+            onZonesDetected = { snapshot, zones ->
+                screenOverlays = screenOverlayStore.addDetectedZones(
+                    current = screenOverlays,
+                    snapshot = snapshot,
+                    zones = zones,
+                )
+            },
         )
+    }
+
+    LaunchedEffect(screenOverlayStore) {
+        while (true) {
+            delay(SCREEN_OVERLAY_PRUNE_INTERVAL_MS)
+            screenOverlays = screenOverlayStore.pruneExpired(screenOverlays)
+        }
     }
 
     DisposableEffect(Unit) {
         onDispose {
             detectionPipeline.onSceneDisposed()
+            screenOverlays = emptyList()
             coroutineScope.cancel()
         }
     }
@@ -199,6 +217,10 @@ actual fun ArSceneHost(
                 detectionPipeline.onSessionUpdated(frame)
             },
         )
+        ScreenBoundingBoxOverlay(
+            overlays = screenOverlays,
+            modifier = Modifier.fillMaxSize(),
+        )
         Text(
             text = debugText,
             modifier = Modifier
@@ -210,6 +232,8 @@ actual fun ArSceneHost(
         )
     }
 }
+
+private const val SCREEN_OVERLAY_PRUNE_INTERVAL_MS = 200L
 
 /**
  * Runs ARCore setup checks and optionally requests ARCore installation.
