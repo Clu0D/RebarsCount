@@ -13,6 +13,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <meta-data android:name="com.google.ar.core" android:value="optional" />
         <activity
+            android:configChanges="keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
             android:name=".MainActivity">
             <intent-filter>

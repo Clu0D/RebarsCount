@@ -1,6 +1,7 @@
 package anton.axenov
 
 import android.os.SystemClock
+import android.view.Surface
 import com.google.ar.core.Frame
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
@@ -18,12 +19,14 @@ import kotlinx.coroutines.withContext
  * @param coroutineScope scope used to run asynchronous detection work.
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param zoneDetector detector used to extract interest zones from snapshots.
+ * @param onTranslationVariantChanged callback invoked when translation variant changes.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
  */
 class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(),
+    private val onTranslationVariantChanged: (CoordinateTranslationVariant) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
 ) {
     private val isSceneActive = AtomicBoolean(false)
@@ -37,6 +40,8 @@ class ArDetectionPipeline(
     private var asyncPlacementNoticeShown = false
     private var lastTrackingState: TrackingState? = null
     private var lastStatusAtMs = 0L
+    private var baselineLandscapeRotation: Int? = null
+    private var lastTranslationVariant: CoordinateTranslationVariant? = null
 
     /**
      * Registers active SceneView instance for subsequent session updates.
@@ -60,6 +65,7 @@ class ArDetectionPipeline(
         }
         placedSceneNodes.clear()
         placedZoneCount = 0
+        baselineLandscapeRotation = null
     }
 
     /**
@@ -104,7 +110,32 @@ class ArDetectionPipeline(
                 val activeSceneView = sceneView ?: return
                 detectionJob = coroutineScope.launch(Dispatchers.Default) {
                     try {
-                        val detectedZones = zoneDetector.detectZones(snapshot.screenshot)
+                        val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
+                            Surface.ROTATION_90,
+                            Surface.ROTATION_270,
+                            -> {
+                                // First observed landscape side is treated as baseline; opposite side means 180-degree rotation.
+                                val baseline = baselineLandscapeRotation
+                                if (baseline == null) {
+                                    baselineLandscapeRotation = displayRotation
+                                    CoordinateTranslationVariant.LANDSCAPE
+                                } else if (displayRotation == baseline) {
+                                    CoordinateTranslationVariant.LANDSCAPE
+                                } else {
+                                    CoordinateTranslationVariant.LANDSCAPE_REVERSED
+                                }
+                            }
+
+                            else -> CoordinateTranslationVariant.PORTRAIT
+                        }
+                        if (translationVariant != lastTranslationVariant) {
+                            lastTranslationVariant = translationVariant
+                            onTranslationVariantChanged(translationVariant)
+                        }
+                        val detectedZones = zoneDetector.detectZones(
+                            screenshot = snapshot.screenshot,
+                            translationVariant = translationVariant,
+                        )
                         withContext(Dispatchers.Main.immediate) {
                             if (detectedZones.isEmpty()) {
                                 reportStatus("No interest zones detected", false)

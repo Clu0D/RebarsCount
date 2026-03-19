@@ -18,9 +18,13 @@ class DetectInterestZones(
      * Detects zones of interest on a screenshot.
      *
      * @param screenshot screenshot captured from camera frame.
+     * @param translationVariant detector-to-image translation variant based on current device orientation.
      * @return list with one random zone bounding box.
      */
-    fun detectZones(screenshot: Bitmap): List<DetectedInterestZone> {
+    fun detectZones(
+        screenshot: Bitmap,
+        translationVariant: CoordinateTranslationVariant,
+    ): List<DetectedInterestZone> {
         val width = screenshot.width
         val height = screenshot.height
         if (width <= 1 || height <= 1) {
@@ -39,7 +43,15 @@ class DetectInterestZones(
         val bottom = (top + boxHeight).coerceAtMost(height - 1)
         return listOf(
             DetectedInterestZone(
-                boundingBox = translateCoordinates(left, top, right, bottom, width, height),
+                boundingBox = translateCoordinates(
+                    left = left,
+                    top = top,
+                    right = right,
+                    bottom = bottom,
+                    width = width,
+                    height = height,
+                    translationVariant = translationVariant,
+                ),
             ),
         )
     }
@@ -47,41 +59,57 @@ class DetectInterestZones(
     /**
      * Translates detector-space coordinates to image-space coordinates used by placement math.
      *
-     * Detector output is treated as using the same X axis but opposite Y axis direction
-     * (origin at bottom-left). Placement and depth projection code expect top-left image origin.
-     * Inputs are clamped to image bounds and reordered if detector produces inverted edges.
-     *
      * @param left detector-space left X coordinate.
      * @param top detector-space top Y coordinate.
      * @param right detector-space right X coordinate.
      * @param bottom detector-space bottom Y coordinate.
      * @param width source image width in pixels.
      * @param height source image height in pixels.
+     * @param translationVariant detector-to-image translation variant.
      * @return translated bounding box in image-space coordinates.
      */
-    fun translateCoordinates(left: Int, top: Int, right: Int, bottom: Int, width: Int, height: Int): BoundingBox {
-        if (width <= 0 || height <= 0) {
-            return BoundingBox(left = 0, top = 0, right = 0, bottom = 0)
+    fun translateCoordinates(
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        width: Int,
+        height: Int,
+        translationVariant: CoordinateTranslationVariant,
+    ): BoundingBox {
+
+        return when (translationVariant) {
+            CoordinateTranslationVariant.PORTRAIT -> BoundingBox(
+                left = top,
+                top = left,
+                right = bottom,
+                bottom = right,
+            )
+
+            CoordinateTranslationVariant.LANDSCAPE -> BoundingBox(
+                left = width - 1 - right,
+                top = height - 1 - bottom,
+                right = width - 1 - left,
+                bottom = height - 1 - top,
+            )
+
+            CoordinateTranslationVariant.LANDSCAPE_REVERSED -> BoundingBox(
+                left = width - 1 - right,
+                top = top,
+                right = width - 1 - left,
+                bottom = bottom,
+            )
         }
-
-        val maxX = width - 1
-        val maxY = height - 1
-        val clampedLeft = left.coerceIn(0, maxX)
-        val clampedRight = right.coerceIn(0, maxX)
-        val clampedTop = top.coerceIn(0, maxY)
-        val clampedBottom = bottom.coerceIn(0, maxY)
-
-        val normalizedLeft = minOf(clampedLeft, clampedRight)
-        val normalizedRight = maxOf(clampedLeft, clampedRight)
-        val normalizedTop = minOf(clampedTop, clampedBottom)
-        val normalizedBottom = maxOf(clampedTop, clampedBottom)
-
-        val newLeft = normalizedLeft
-        val newTop = maxY - normalizedBottom
-        val newRight = normalizedRight
-        val newBottom = maxY - normalizedTop
-        return BoundingBox(newLeft, newTop, newRight, newBottom)
     }
+}
+
+/**
+ * Translation strategy by orientation.
+ */
+enum class CoordinateTranslationVariant {
+    PORTRAIT,
+    LANDSCAPE,
+    LANDSCAPE_REVERSED,
 }
 
 /**
