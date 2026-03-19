@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
  * @param coroutineScope scope used to run asynchronous detection work.
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param zoneDetector detector used to extract interest zones from snapshots.
+ * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
  */
 class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,

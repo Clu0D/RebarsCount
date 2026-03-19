@@ -36,6 +36,12 @@ class ScreenBoundingBoxOverlayStore(
 ) {
     /**
      * Adds newly detected zones as screen overlays and drops already expired ones.
+     *
+     * @param current currently active overlays.
+     * @param snapshot detection frame snapshot.
+     * @param zones newly detected zones.
+     * @param nowElapsedMs current elapsed realtime timestamp.
+     * @return active overlays list with newly appended entries.
      */
     fun addDetectedZones(
         current: List<ScreenBoundingBoxOverlayEntry>,

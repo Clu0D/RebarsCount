@@ -1,11 +1,8 @@
 package anton.axenov
 
-import com.google.ar.core.Anchor
 import com.google.ar.core.Plane
 import com.google.ar.core.Pose
 import io.github.sceneview.ar.ARSceneView
-import io.github.sceneview.ar.node.AnchorNode
-import io.github.sceneview.node.CubeNode
 import kotlin.random.Random
 import korlibs.math.geom.Vector3F as Vector3
 
