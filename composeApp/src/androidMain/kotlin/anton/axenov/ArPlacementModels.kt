@@ -61,13 +61,11 @@ data class DetectionFrameSnapshotCaptureResult(
  * Result of world placement attempt for one detected bounding box.
  *
  * @param anchorNode placed anchor node or null when placement failed.
- * @param strategy strategy used for placement.
  * @param details detailed diagnostic information.
  */
 data class BoundingBoxPlacementResult(
     val anchorNode: AnchorNode?,
     val pointNodes: List<AnchorNode> = emptyList(),
-    val strategy: PlacementStrategy,
     val details: String,
 ) {
     val placedNodes: List<AnchorNode>

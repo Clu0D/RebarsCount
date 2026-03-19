@@ -169,7 +169,6 @@ class ArDetectionPipeline(
                                     BoundingBoxPlacementResult(
                                         anchorNode = null,
                                         pointNodes = emptyList(),
-                                        strategy = PlacementStrategy.FAILED,
                                         details =
                                             "Placement aborted: ${error.javaClass.simpleName}: " +
                                                 (error.message ?: "unknown error"),
