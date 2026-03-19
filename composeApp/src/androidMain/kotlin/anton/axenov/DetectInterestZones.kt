@@ -18,12 +18,10 @@ class DetectInterestZones(
      * Detects zones of interest on a screenshot.
      *
      * @param screenshot screenshot captured from camera frame.
-     * @param translationVariant detector-to-image translation variant based on current device orientation.
      * @return list with one random zone bounding box.
      */
     fun detectZones(
-        screenshot: Bitmap,
-        translationVariant: CoordinateTranslationVariant,
+        screenshot: Bitmap
     ): List<DetectedInterestZone> {
         val width = screenshot.width
         val height = screenshot.height
@@ -48,68 +46,10 @@ class DetectInterestZones(
                     top = top,
                     right = right,
                     bottom = bottom,
-                    width = width,
-                    height = height,
-                    translationVariant = translationVariant,
                 ),
             ),
         )
     }
-
-    /**
-     * Translates detector-space coordinates to image-space coordinates used by placement math.
-     *
-     * @param left detector-space left X coordinate.
-     * @param top detector-space top Y coordinate.
-     * @param right detector-space right X coordinate.
-     * @param bottom detector-space bottom Y coordinate.
-     * @param width source image width in pixels.
-     * @param height source image height in pixels.
-     * @param translationVariant detector-to-image translation variant.
-     * @return translated bounding box in image-space coordinates.
-     */
-    fun translateCoordinates(
-        left: Int,
-        top: Int,
-        right: Int,
-        bottom: Int,
-        width: Int,
-        height: Int,
-        translationVariant: CoordinateTranslationVariant,
-    ): BoundingBox {
-
-        return when (translationVariant) {
-            CoordinateTranslationVariant.PORTRAIT -> BoundingBox(
-                left = top,
-                top = left,
-                right = bottom,
-                bottom = right,
-            )
-
-            CoordinateTranslationVariant.LANDSCAPE -> BoundingBox(
-                left = width - 1 - right,
-                top = height - 1 - bottom,
-                right = width - 1 - left,
-                bottom = height - 1 - top,
-            )
-
-            CoordinateTranslationVariant.LANDSCAPE_REVERSED -> BoundingBox(
-                left = width - 1 - right,
-                top = top,
-                right = width - 1 - left,
-                bottom = bottom,
-            )
-        }
-    }
-}
-
-/**
- * Translation strategy by orientation.
- */
-enum class CoordinateTranslationVariant {
-    PORTRAIT,
-    LANDSCAPE,
-    LANDSCAPE_REVERSED,
 }
 
 /**

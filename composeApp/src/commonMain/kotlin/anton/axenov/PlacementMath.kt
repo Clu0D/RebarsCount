@@ -228,3 +228,54 @@ fun fitPlanePoseFromPoints(
 expect fun fitPlaneRegression(
     points: List<Vector3>
 ): Vector3
+
+
+/**
+ * Translates one detector-space point to image-space coordinates used by placement math.
+ *
+ * @param x detector-space X coordinate.
+ * @param y detector-space Y coordinate.
+ * @param width source image width in pixels.
+ * @param height source image height in pixels.
+ * @param translationVariant detector-to-image translation variant.
+ * @return translated and clamped image-space point.
+ */
+fun translateCoordinates(
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    translationVariant: CoordinateTranslationVariant,
+): ImagePoint {
+    if (width <= 0 || height <= 0) {
+        return ImagePoint(0, 0)
+    }
+
+    val safeX = x.coerceIn(0, width - 1)
+    val safeY = y.coerceIn(0, height - 1)
+    return when (translationVariant) {
+        CoordinateTranslationVariant.PORTRAIT -> ImagePoint(
+            x = safeY * width / height,
+            y = (width - 1 - safeX) * height / width,
+        )
+
+        CoordinateTranslationVariant.LANDSCAPE -> ImagePoint(
+            x = width - 1 - safeX,
+            y = height - 1 - safeY,
+        )
+
+        CoordinateTranslationVariant.LANDSCAPE_REVERSED -> ImagePoint(
+            x = safeX,
+            y = safeY,
+        )
+    }
+}
+
+/**
+ * Translation strategy by orientation.
+ */
+enum class CoordinateTranslationVariant {
+    PORTRAIT,
+    LANDSCAPE,
+    LANDSCAPE_REVERSED,
+}

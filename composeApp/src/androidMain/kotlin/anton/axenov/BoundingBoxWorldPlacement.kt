@@ -12,12 +12,14 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param sceneView active SceneView AR view.
  * @param snapshot immutable snapshot captured from a specific frame.
  * @param zone detected zone that belongs to the same snapshot screenshot.
+ * @param translationVariant detector-to-image translation variant used for sampled points.
  * @return placement result with strategy and diagnostics.
  */
 fun placeZoneInWorld(
     sceneView: ARSceneView,
     snapshot: DetectionFrameSnapshot,
     zone: DetectedInterestZone,
+    translationVariant: CoordinateTranslationVariant,
 ): BoundingBoxPlacementResult {
     val imagePoints = sampleImagePointsInBoundingBox(
         boundingBox = zone.boundingBox,
@@ -25,7 +27,15 @@ fun placeZoneInWorld(
         imageHeight = snapshot.imageHeight,
         count = DEPTH_SAMPLE_POINT_COUNT,
         random = Random(snapshot.frameTimestamp),
-    )
+    ).map { point ->
+        translateCoordinates(
+            x = point.x,
+            y = point.y,
+            width = snapshot.imageWidth,
+            height = snapshot.imageHeight,
+            translationVariant = translationVariant,
+        )
+    }
 
     val viewSamplePoints = sampleViewPointsInZone(
         snapshot = snapshot,
@@ -502,7 +512,6 @@ private const val DEPTH16_CONFIDENCE_SHIFT = 13
 private const val MILLIMETERS_IN_METER = 1000f
 private const val DEPTH_SAMPLE_RADIUS_PX = 4
 private const val DEPTH_SAMPLE_POINT_COUNT = 20
-private const val HIT_TEST_SAMPLE_POINT_COUNT = 20
 private const val PLANE_MIN_POINT_COUNT = 6
 private const val MIN_RECTANGLE_SIZE_METERS = 0.03f
 private const val MAX_RECTANGLE_SIZE_METERS = 5.0f

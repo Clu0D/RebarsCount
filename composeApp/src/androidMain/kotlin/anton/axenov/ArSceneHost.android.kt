@@ -146,6 +146,7 @@ actual fun ArSceneHost(
     }
 
     var debugText by remember { mutableStateOf("AR: waiting for renderer") }
+    var translationText by remember { mutableStateOf("[TRANSLATION=UNKNOWN]") }
     val screenOverlayStore = remember { ScreenBoundingBoxOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
@@ -158,6 +159,9 @@ actual fun ArSceneHost(
         ArDetectionPipeline(
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
+            onTranslationVariantChanged = { variant ->
+                translationText = "[TRANSLATION=${variant.name}]"
+            },
             onZonesDetected = { snapshot, zones ->
                 screenOverlays = screenOverlayStore.addDetectedZones(
                     current = screenOverlays,
@@ -222,7 +226,7 @@ actual fun ArSceneHost(
             modifier = Modifier.fillMaxSize(),
         )
         Text(
-            text = debugText,
+            text = "$translationText\n$debugText",
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(12.dp)

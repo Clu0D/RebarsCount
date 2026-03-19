@@ -133,8 +133,7 @@ class ArDetectionPipeline(
                             onTranslationVariantChanged(translationVariant)
                         }
                         val detectedZones = zoneDetector.detectZones(
-                            screenshot = snapshot.screenshot,
-                            translationVariant = translationVariant,
+                            screenshot = snapshot.screenshot
                         )
                         withContext(Dispatchers.Main.immediate) {
                             if (detectedZones.isEmpty()) {
@@ -160,10 +159,11 @@ class ArDetectionPipeline(
                                 }
 
                                 val placementResult = runCatching {
-                                    placeBoundingBoxInWorld(
+                                    placeZoneInWorld(
                                         sceneView = activeSceneView,
                                         snapshot = snapshot,
                                         zone = zone,
+                                        translationVariant = translationVariant,
                                     )
                                 }.getOrElse { error ->
                                     BoundingBoxPlacementResult(
@@ -180,7 +180,7 @@ class ArDetectionPipeline(
                                         placedZoneCount++
                                     }
                                     reportStatus(
-                                        "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.strategy.name} " +
+                                        "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
                                             "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
                                         true,
                                     )
