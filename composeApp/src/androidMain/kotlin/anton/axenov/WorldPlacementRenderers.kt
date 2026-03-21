@@ -10,6 +10,28 @@ import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
+ * Draws one managed zone polygon and all of its sampled points.
+ *
+ * @param sceneView active SceneView.
+ * @param zone zone data to draw.
+ * @return created anchor nodes for polygon edges and sampled points.
+ */
+fun drawZone(
+    sceneView: ARSceneView,
+    zone: Zone,
+): List<AnchorNode> {
+    val polygonNodes = createPolygonMarkerNodes(
+        sceneView = sceneView,
+        polygonPoints = zone.polygonPoints,
+    )
+    val pointNodes = createWorldPointMarkerNodes(
+        sceneView = sceneView,
+        worldPoints = zone.sampledPoints,
+    )
+    return polygonNodes + pointNodes
+}
+
+/**
  * Creates cube markers for world-space sample points and adds them to the scene.
  *
  * @param sceneView active SceneView.

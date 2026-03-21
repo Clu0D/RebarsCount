@@ -11,10 +11,11 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param rotation orientation quaternion where local +Z is the plane normal.
  * @param normal fitted normal.
  */
-data class PlanePoseData(
+data class PlanePose(
     val center: Vector3,
     val rotation: Quaternion,
     val normal: Vector3,
+    val offsetD: Float = -normal.dot(center),
 )
 
 /**
@@ -25,7 +26,7 @@ data class PlanePoseData(
  * @param details fitting diagnostics.
  */
 data class PlaneFitResult(
-    val pose: PlanePoseData?,
+    val pose: PlanePose?,
     val depthMeters: Float?,
     val details: String,
 )
@@ -84,15 +85,15 @@ fun selectMedianPointCandidate(candidates: List<DepthCandidate>): DepthCandidate
 /**
  * Samples random image points inside a bounding box and always includes its center.
  *
- * @param boundingBox bounding box in image pixels.
+ * @param screenBoundingBox in image pixels.
  * @param imageWidth image width.
  * @param imageHeight image height.
  * @param count number of points to sample.
  * @param random random source.
  * @return sampled image-space points.
  */
-fun sampleImagePointsInBoundingBox(
-    boundingBox: BoundingBox,
+fun sampleImagePointsInScreenBoundingBox(
+    screenBoundingBox: ScreenBoundingBox,
     imageWidth: Int,
     imageHeight: Int,
     count: Int,
@@ -101,10 +102,10 @@ fun sampleImagePointsInBoundingBox(
     if (imageWidth <= 0 || imageHeight <= 0) {
         return emptyList()
     }
-    val left = boundingBox.left.coerceIn(0, imageWidth - 1)
-    val right = boundingBox.right.coerceIn(0, imageWidth - 1).coerceAtLeast(left)
-    val top = boundingBox.top.coerceIn(0, imageHeight - 1)
-    val bottom = boundingBox.bottom.coerceIn(0, imageHeight - 1).coerceAtLeast(top)
+    val left = screenBoundingBox.left.coerceIn(0, imageWidth - 1)
+    val right = screenBoundingBox.right.coerceIn(0, imageWidth - 1).coerceAtLeast(left)
+    val top = screenBoundingBox.top.coerceIn(0, imageHeight - 1)
+    val bottom = screenBoundingBox.bottom.coerceIn(0, imageHeight - 1).coerceAtLeast(top)
 
     val points = mutableListOf<ImagePoint>()
     points += ImagePoint((left + right) / 2, (top + bottom) / 2)
@@ -145,42 +146,6 @@ fun mapImagePointsToViewPoints(
 }
 
 /**
- * Computes rectangle physical size in meters from pixel bounding-box and depth.
- *
- * @param boundingBox detected bounding box in image pixels.
- * @param depthMeters distance from camera in meters.
- * @param focalLengthX camera focal length X in pixels.
- * @param focalLengthY camera focal length Y in pixels.
- * @param minRectangleSizeMeters minimum allowed rectangle side.
- * @param maxRectangleSizeMeters maximum allowed rectangle side.
- * @param minDepthMeters minimum accepted depth.
- * @param maxDepthMeters maximum accepted depth.
- * @param defaultDepthMeters fallback depth used when depth is unavailable.
- * @return pair `(widthMeters, heightMeters)`.
- */
-fun computeRectanglePhysicalSize(
-    boundingBox: BoundingBox,
-    depthMeters: Float?,
-    focalLengthX: Float,
-    focalLengthY: Float,
-    minRectangleSizeMeters: Float,
-    maxRectangleSizeMeters: Float,
-    minDepthMeters: Float,
-    maxDepthMeters: Float,
-    defaultDepthMeters: Float,
-): Pair<Float, Float> {
-    val safeDepth = (depthMeters ?: defaultDepthMeters).coerceIn(minDepthMeters, maxDepthMeters)
-    val boxWidthPx = (boundingBox.right - boundingBox.left).coerceAtLeast(1)
-    val boxHeightPx = (boundingBox.bottom - boundingBox.top).coerceAtLeast(1)
-    val widthMeters = (boxWidthPx / focalLengthX) * safeDepth
-    val heightMeters = (boxHeightPx / focalLengthY) * safeDepth
-    return Pair(
-        first = widthMeters.coerceIn(minRectangleSizeMeters, maxRectangleSizeMeters),
-        second = heightMeters.coerceIn(minRectangleSizeMeters, maxRectangleSizeMeters),
-    )
-}
-
-/**
  * Fits a plane and returns pose with +Z aligned to fitted normal.
  *
  * Regression model: `z = a*x + b*y + c`.
@@ -216,7 +181,7 @@ fun fitPlanePoseFromPoints(
     val depth = (cameraPosition - center).length
 
     PlaneFitResult(
-        pose = PlanePoseData(center, rotation, normal),
+        pose = PlanePose(center, rotation, normal),
         depthMeters = depth,
         details = "ok"
     )

@@ -1,28 +1,27 @@
 package anton.axenov
 
 import com.google.ar.core.Plane
-import com.google.ar.core.Pose
 import io.github.sceneview.ar.ARSceneView
 import kotlin.random.Random
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
- * Places a detected bounding box in world space using depth from the captured frame snapshot.
+ * Places a detected zone in world space using depth from the captured frame snapshot.
  *
  * @param sceneView active SceneView AR view.
  * @param snapshot immutable snapshot captured from a specific frame.
  * @param zone detected zone that belongs to the same snapshot screenshot.
  * @param translationVariant detector-to-image translation variant used for sampled points.
- * @return placement result with strategy and diagnostics.
+ * @return zone placement result with diagnostics.
  */
 fun placeZoneInWorld(
     sceneView: ARSceneView,
     snapshot: DetectionFrameSnapshot,
     zone: DetectedInterestZone,
     translationVariant: CoordinateTranslationVariant,
-): BoundingBoxPlacementResult {
-    val imagePoints = sampleImagePointsInBoundingBox(
-        boundingBox = zone.boundingBox,
+): ZonePlacementResult {
+    val imagePoints = sampleImagePointsInScreenBoundingBox(
+        screenBoundingBox = zone.screenBoundingBox,
         imageWidth = snapshot.imageWidth,
         imageHeight = snapshot.imageHeight,
         count = DEPTH_SAMPLE_POINT_COUNT,
@@ -77,17 +76,15 @@ fun placeZoneInWorld(
         cameraPosition = cameraPosition,
         minPointCount = PLANE_MIN_POINT_COUNT,
     )
-    val pose = planeFit.pose?.toArPose()
+    val fittedPlanePose = planeFit.pose
         ?: return failedPlacement("$placementSummary. Plane fit failed: ${planeFit.details}")
 
     return placeFromPose(
-        sceneView = sceneView,
         snapshot = snapshot,
         zone = zone,
-        pose = pose,
+        translationVariant = translationVariant,
+        planePose = fittedPlanePose,
         worldPoints = worldPoints,
-        depthMeters = planeFit.depthMeters,
-        sessionNullDetails = "$placementSummary. Mixed points fit succeeded, but AR session is null",
         successDetailsPrefix =
             "$placementSummary. " +
                     "Estimated depth=${planeFit.depthMeters ?: -1f}m. " +
@@ -198,69 +195,159 @@ private fun placePointWithFeature(
  * Builds a failed placement result with provided diagnostics.
  *
  * @param details detailed failure reason.
- * @return placement result with `FAILED` strategy.
+ * @return zone placement result with `FAILED` strategy.
  */
-private fun failedPlacement(details: String): BoundingBoxPlacementResult {
-    return BoundingBoxPlacementResult(
-        anchorNode = null,
-        pointNodes = emptyList(),
+private fun failedPlacement(details: String): ZonePlacementResult {
+    return ZonePlacementResult(
+        zone = null,
         details = details,
     )
 }
 
 /**
- * Places a rectangle marker by creating an anchor from a world pose.
+ * Builds a world-space zone polygon by intersecting screen-corner rays with fitted infinite plane.
  *
- * @param sceneView active SceneView.
  * @param snapshot frame snapshot with camera intrinsics.
- * @param zone detected zone used for rectangle sizing.
- * @param pose world pose to anchor the rectangle to.
- * @param depthMeters estimated depth used for physical size estimation.
- * @param sessionNullDetails details message when AR session is unavailable.
+ * @param zone detected zone used for corner projection.
+ * @param translationVariant detector-to-image translation variant for zone polygon corners.
+ * @param planePose fitted infinite plane used as projection target.
  * @param successDetailsPrefix details prefix when placement succeeds.
- * @return placement result.
+ * @return zone placement result.
  */
 private fun placeFromPose(
-    sceneView: ARSceneView,
     snapshot: DetectionFrameSnapshot,
     zone: DetectedInterestZone,
-    pose: Pose,
+    translationVariant: CoordinateTranslationVariant,
+    planePose: PlanePose,
     worldPoints: List<Vector3>,
-    depthMeters: Float?,
-    sessionNullDetails: String,
     successDetailsPrefix: String,
-): BoundingBoxPlacementResult {
-    val session = sceneView.session ?: return failedPlacement(sessionNullDetails)
-    val anchor = session.createAnchor(pose)
-    val rectangleSize = computeRectanglePhysicalSize(
-        boundingBox = zone.boundingBox,
-        depthMeters = depthMeters,
-        focalLengthX = snapshot.focalLengthX,
-        focalLengthY = snapshot.focalLengthY,
-        minRectangleSizeMeters = MIN_RECTANGLE_SIZE_METERS,
-        maxRectangleSizeMeters = MAX_RECTANGLE_SIZE_METERS,
-        minDepthMeters = MIN_RECTANGLE_DEPTH_METERS,
-        maxDepthMeters = MAX_RECTANGLE_DEPTH_METERS,
-        defaultDepthMeters = DEFAULT_FALLBACK_DEPTH_METERS,
+): ZonePlacementResult {
+    val projectedCornerPoints = projectZonePolygonToInfinitePlane(
+        snapshot = snapshot,
+        zone = zone,
+        translationVariant = translationVariant,
+        planeCenter = planePose.center,
+        planeNormal = planePose.normal,
     )
-    val anchorNode = createRectangleMarkerAnchorNode(
-        sceneView = sceneView,
-        anchor = anchor,
-        rectangleWidthMeters = rectangleSize.first,
-        rectangleHeightMeters = rectangleSize.second,
-    )
-    val pointNodes = createWorldPointMarkerNodes(
-        sceneView = sceneView,
-        worldPoints = worldPoints,
-    )
-    return BoundingBoxPlacementResult(
-        anchorNode = anchorNode,
-        pointNodes = pointNodes,
+    if (projectedCornerPoints == null) {
+        return failedPlacement("$successDetailsPrefix Polygon projection failed for one or more corners.")
+    }
+    return ZonePlacementResult(
+        zone = Zone(
+            polygonPoints = projectedCornerPoints,
+            sampledPoints = worldPoints,
+            planePose = planePose,
+        ),
         details =
             "$successDetailsPrefix " +
-                    "Rectangle size(m)=(${rectangleSize.first}, ${rectangleSize.second}), " +
-                    "renderedPoints=${pointNodes.size}",
+                "projectedCorners=${projectedCornerPoints.size}, " +
+                "sampledPoints=${worldPoints.size}",
     )
+}
+
+/**
+ * Projects translated screen-space zone polygon corners to a fitted infinite plane.
+ *
+ * @param snapshot captured frame snapshot.
+ * @param zone detected zone in detector coordinates.
+ * @param translationVariant detector-to-image translation variant.
+ * @param planeCenter one point on the projection target plane.
+ * @param planeNormal normalized projection target plane normal.
+ * @return four projected world-space polygon points or null when projection fails for any point.
+ */
+private fun projectZonePolygonToInfinitePlane(
+    snapshot: DetectionFrameSnapshot,
+    zone: DetectedInterestZone,
+    translationVariant: CoordinateTranslationVariant,
+    planeCenter: Vector3,
+    planeNormal: Vector3,
+): List<Vector3>? {
+    val translatedCorners = listOf(
+        ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.top),
+        ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.top),
+        ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.bottom),
+        ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.bottom),
+    ).map { corner ->
+        translateCoordinates(
+            x = corner.x,
+            y = corner.y,
+            width = snapshot.imageWidth,
+            height = snapshot.imageHeight,
+            translationVariant = translationVariant,
+        )
+    }
+    val projectedCorners = translatedCorners.map { corner ->
+        projectImagePointToPlane(
+            snapshot = snapshot,
+            imagePoint = corner,
+            planeCenter = planeCenter,
+            planeNormal = planeNormal,
+        )
+    }
+    if (projectedCorners.any { it == null }) {
+        return null
+    }
+    return projectedCorners.map { it!! }
+}
+
+/**
+ * Projects one image-space point onto a world-space plane via camera intrinsics and camera pose.
+ *
+ * @param snapshot captured frame snapshot.
+ * @param imagePoint image-space point to project.
+ * @param planeCenter one point on the projection plane.
+ * @param planeNormal normalized projection plane normal.
+ * @return world-space intersection point or null when the ray is parallel to plane or behind camera.
+ */
+private fun projectImagePointToPlane(
+    snapshot: DetectionFrameSnapshot,
+    imagePoint: ImagePoint,
+    planeCenter: Vector3,
+    planeNormal: Vector3,
+): Vector3? {
+    if (
+        snapshot.imageWidth <= 0 ||
+        snapshot.imageHeight <= 0 ||
+        snapshot.focalLengthX == 0f ||
+        snapshot.focalLengthY == 0f
+    ) {
+        return null
+    }
+    val imageX = imagePoint.x.coerceIn(0, snapshot.imageWidth - 1)
+    val imageY = imagePoint.y.coerceIn(0, snapshot.imageHeight - 1)
+
+    val directionCamera = Vector3(
+        x = (imageX - snapshot.principalPointX) / snapshot.focalLengthX,
+        y = -(imageY - snapshot.principalPointY) / snapshot.focalLengthY,
+        z = -1f,
+    ).normalized()
+    val rayOrigin = Vector3(
+        x = snapshot.cameraPose.tx(),
+        y = snapshot.cameraPose.ty(),
+        z = snapshot.cameraPose.tz(),
+    )
+    val rayPointWorld = snapshot.cameraPose.transformPoint(
+        floatArrayOf(
+            directionCamera.x,
+            directionCamera.y,
+            directionCamera.z,
+        ),
+    )
+    val rayDirection = Vector3(
+        x = rayPointWorld[0] - rayOrigin.x,
+        y = rayPointWorld[1] - rayOrigin.y,
+        z = rayPointWorld[2] - rayOrigin.z,
+    ).normalized()
+
+    val denominator = planeNormal.dot(rayDirection)
+    if (kotlin.math.abs(denominator) <= RAY_PLANE_EPSILON) {
+        return null
+    }
+    val distance = planeNormal.dot(planeCenter - rayOrigin) / denominator
+    if (distance <= 0f) {
+        return null
+    }
+    return rayOrigin + rayDirection * distance
 }
 
 
@@ -437,32 +524,6 @@ private fun snapshotCameraPosition(snapshot: DetectionFrameSnapshot): Vector3 {
 }
 
 /**
- * Converts shared pose representation to ARCore pose.
- *
- * @return ARCore pose.
- */
-private fun PlanePoseData.toArPose(): Pose {
-    return Pose(
-        floatArrayOf(center.x, center.y, center.z),
-        floatArrayOf(rotation.x, rotation.y, rotation.z, rotation.w),
-    )
-}
-
-/**
- * Result of 2D-to-3D depth projection for a bounding box.
- *
- * @param worldPose projected world pose or null when projection failed.
- * @param depthMeters projected depth in meters.
- * @param details detailed projection diagnostics.
- */
-private data class DepthProjectionAttempt(
-    val worldPose: Pose?,
-    val depthMeters: Float?,
-    val worldPoints: List<Vector3>,
-    val details: String,
-)
-
-/**
  * Point placement method used in mixed fallback pipeline.
  */
 private enum class PointPlacementMethod {
@@ -513,8 +574,4 @@ private const val MILLIMETERS_IN_METER = 1000f
 private const val DEPTH_SAMPLE_RADIUS_PX = 4
 private const val DEPTH_SAMPLE_POINT_COUNT = 20
 private const val PLANE_MIN_POINT_COUNT = 6
-private const val MIN_RECTANGLE_SIZE_METERS = 0.03f
-private const val MAX_RECTANGLE_SIZE_METERS = 5.0f
-private const val MIN_RECTANGLE_DEPTH_METERS = 0.1f
-private const val MAX_RECTANGLE_DEPTH_METERS = 20.0f
-private const val DEFAULT_FALLBACK_DEPTH_METERS = 1.5f
+private const val RAY_PLANE_EPSILON = 1e-5f

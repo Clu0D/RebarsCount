@@ -31,8 +31,8 @@ class PlacementMathTest {
 
     @Test
     fun `image-point sampling handles invalid sizes and clamped randomized bounds`() {
-        val invalid = sampleImagePointsInBoundingBox(
-            boundingBox = BoundingBox(0, 0, 10, 10),
+        val invalid = sampleImagePointsInScreenBoundingBox(
+            screenBoundingBox = ScreenBoundingBox(0, 0, 10, 10),
             imageWidth = 0,
             imageHeight = 20,
             count = 4,
@@ -40,8 +40,8 @@ class PlacementMathTest {
         )
         invalid shouldBe emptyList()
 
-        val points = sampleImagePointsInBoundingBox(
-            boundingBox = BoundingBox(left = -10, top = -5, right = 8, bottom = 6),
+        val points = sampleImagePointsInScreenBoundingBox(
+            screenBoundingBox = ScreenBoundingBox(left = -10, top = -5, right = 8, bottom = 6),
             imageWidth = 9,
             imageHeight = 7,
             count = 3,
@@ -55,8 +55,8 @@ class PlacementMathTest {
 
     @Test
     fun `image-point sampling still returns center when count is zero`() {
-        val points = sampleImagePointsInBoundingBox(
-            boundingBox = BoundingBox(left = 3, top = 3, right = 3, bottom = 3),
+        val points = sampleImagePointsInScreenBoundingBox(
+            screenBoundingBox = ScreenBoundingBox(left = 3, top = 3, right = 3, bottom = 3),
             imageWidth = 10,
             imageHeight = 10,
             count = 0,
@@ -81,6 +81,18 @@ class PlacementMathTest {
             ViewPoint(0f, 0f),
         )
 
+        val cropped = mapImagePointsToViewPoints(
+            imagePoints = listOf(ImagePoint(0, 0), ImagePoint(99, 99)),
+            imageWidth = 100,
+            imageHeight = 100,
+            viewWidth = 200,
+            viewHeight = 100,
+        )
+        cropped shouldBe listOf(
+            ViewPoint(50f, 0f),
+            ViewPoint(149f, 99f),
+        )
+
         mapImagePointsToViewPoints(
             imagePoints = listOf(ImagePoint(1, 1)),
             imageWidth = 100,
@@ -91,34 +103,41 @@ class PlacementMathTest {
     }
 
     @Test
-    fun `physical rectangle size uses fallback depth and clamps output`() {
-        val fromDefaultDepth = computeRectanglePhysicalSize(
-            boundingBox = BoundingBox(0, 0, 100, 50),
-            depthMeters = null,
-            focalLengthX = 1000f,
-            focalLengthY = 500f,
-            minRectangleSizeMeters = 0.1f,
-            maxRectangleSizeMeters = 1.0f,
-            minDepthMeters = 0.2f,
-            maxDepthMeters = 4f,
-            defaultDepthMeters = 2f,
-        )
-        fromDefaultDepth.first shouldBe (0.2f plusOrMinus 0.0001f)
-        fromDefaultDepth.second shouldBe (0.2f plusOrMinus 0.0001f)
+    fun `translateCoordinates should apply orientation-aware point mapping`() {
+        translateCoordinates(
+            x = 10,
+            y = 20,
+            width = 100,
+            height = 80,
+            translationVariant = CoordinateTranslationVariant.PORTRAIT,
+        ) shouldBe ImagePoint(10, 20)
 
-        val clamped = computeRectanglePhysicalSize(
-            boundingBox = BoundingBox(5, 5, 3, 4),
-            depthMeters = 100f,
-            focalLengthX = 100f,
-            focalLengthY = 100f,
-            minRectangleSizeMeters = 0.3f,
-            maxRectangleSizeMeters = 2.0f,
-            minDepthMeters = 0.5f,
-            maxDepthMeters = 5f,
-            defaultDepthMeters = 1f,
-        )
-        clamped.first shouldBe (0.3f plusOrMinus 0.0001f)
-        clamped.second shouldBe (0.3f plusOrMinus 0.0001f)
+        translateCoordinates(
+            x = 10,
+            y = 20,
+            width = 100,
+            height = 80,
+            translationVariant = CoordinateTranslationVariant.LANDSCAPE,
+        ) shouldBe ImagePoint(89, 59)
+
+        translateCoordinates(
+            x = 10,
+            y = 20,
+            width = 100,
+            height = 80,
+            translationVariant = CoordinateTranslationVariant.LANDSCAPE_REVERSED,
+        ) shouldBe ImagePoint(89, 20)
+    }
+
+    @Test
+    fun `translateCoordinates should clamp invalid source point`() {
+        translateCoordinates(
+            x = 120,
+            y = -5,
+            width = 100,
+            height = 80,
+            translationVariant = CoordinateTranslationVariant.LANDSCAPE,
+        ) shouldBe ImagePoint(0, 79)
     }
 
     @Test

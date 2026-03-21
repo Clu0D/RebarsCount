@@ -12,15 +12,15 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 
 /**
- * One temporary screen-space overlay rectangle drawn over the AR view.
+ * One temporary screen-space overlay bounding box drawn over the AR view.
  *
- * @param boundingBox rectangle in source image pixels.
+ * @param screenBoundingBox polygon bounds in source image pixels.
  * @param sourceImageWidth source image width in pixels.
  * @param sourceImageHeight source image height in pixels.
  * @param expiresAtElapsedMs elapsed realtime timestamp when overlay should disappear.
  */
 data class ScreenBoundingBoxOverlayEntry(
-    val boundingBox: BoundingBox,
+    val screenBoundingBox: ScreenBoundingBox,
     val sourceImageWidth: Int,
     val sourceImageHeight: Int,
     val expiresAtElapsedMs: Long,
@@ -31,8 +31,8 @@ data class ScreenBoundingBoxOverlayEntry(
  *
  * @param overlayLifetimeMs overlay visibility duration in milliseconds.
  */
-class ScreenBoundingBoxOverlayStore(
-    private val overlayLifetimeMs: Long = SCREEN_BOUNDING_BOX_LIFETIME_MS,
+class ScreenPolygonOverlayStore(
+    private val overlayLifetimeMs: Long = SCREEN_POLYGON_LIFETIME_MS,
 ) {
     /**
      * Adds newly detected zones as screen overlays and drops already expired ones.
@@ -52,7 +52,7 @@ class ScreenBoundingBoxOverlayStore(
         val activeOverlays = pruneExpired(current, nowElapsedMs)
         val newOverlays = zones.map { zone ->
             ScreenBoundingBoxOverlayEntry(
-                boundingBox = zone.boundingBox,
+                screenBoundingBox = zone.screenBoundingBox,
                 sourceImageWidth = snapshot.imageWidth,
                 sourceImageHeight = snapshot.imageHeight,
                 expiresAtElapsedMs = nowElapsedMs + overlayLifetimeMs,
@@ -73,13 +73,13 @@ class ScreenBoundingBoxOverlayStore(
 }
 
 /**
- * Draws temporary detection rectangles in screen pixel space above the AR view.
+ * Draws temporary detection polygons in screen pixel space above the AR view.
  *
  * @param overlays active overlays to draw.
  * @param modifier overlay modifier.
  */
 @Composable
-fun ScreenBoundingBoxOverlay(
+fun ScreenPolygonOverlay(
     overlays: List<ScreenBoundingBoxOverlayEntry>,
     modifier: Modifier = Modifier,
 ) {
@@ -88,18 +88,30 @@ fun ScreenBoundingBoxOverlay(
             if (overlay.sourceImageWidth <= 0 || overlay.sourceImageHeight <= 0) {
                 return@forEach
             }
-
-            val scaleX = size.width / overlay.sourceImageWidth.toFloat()
-            val scaleY = size.height / overlay.sourceImageHeight.toFloat()
-            val left = overlay.boundingBox.left * scaleX
-            val top = overlay.boundingBox.top * scaleY
-            val right = overlay.boundingBox.right * scaleX
-            val bottom = overlay.boundingBox.bottom * scaleY
-            val strokeWidth = (size.minDimension * SCREEN_BOUNDING_BOX_STROKE_RATIO)
-                .coerceIn(SCREEN_BOUNDING_BOX_MIN_STROKE_PX, SCREEN_BOUNDING_BOX_MAX_STROKE_PX)
+            val mappedCorners = mapImagePointsToViewPoints(
+                imagePoints = listOf(
+                    ImagePoint(overlay.screenBoundingBox.left, overlay.screenBoundingBox.top),
+                    ImagePoint(overlay.screenBoundingBox.right, overlay.screenBoundingBox.top),
+                    ImagePoint(overlay.screenBoundingBox.right, overlay.screenBoundingBox.bottom),
+                    ImagePoint(overlay.screenBoundingBox.left, overlay.screenBoundingBox.bottom),
+                ),
+                imageWidth = overlay.sourceImageWidth,
+                imageHeight = overlay.sourceImageHeight,
+                viewWidth = size.width.toInt(),
+                viewHeight = size.height.toInt(),
+            )
+            if (mappedCorners.size < 4) {
+                return@forEach
+            }
+            val left = mappedCorners.minOf { it.xPx }
+            val top = mappedCorners.minOf { it.yPx }
+            val right = mappedCorners.maxOf { it.xPx }
+            val bottom = mappedCorners.maxOf { it.yPx }
+            val strokeWidth = (size.minDimension * SCREEN_POLYGON_STROKE_RATIO)
+                .coerceIn(SCREEN_POLYGON_MIN_STROKE_PX, SCREEN_POLYGON_MAX_STROKE_PX)
 
             drawRect(
-                color = SCREEN_BOUNDING_BOX_COLOR,
+                color = SCREEN_POLYGON_COLOR,
                 topLeft = Offset(left, top),
                 size = Size(
                     width = (right - left).coerceAtLeast(1f),
@@ -111,8 +123,8 @@ fun ScreenBoundingBoxOverlay(
     }
 }
 
-private const val SCREEN_BOUNDING_BOX_LIFETIME_MS = 5_000L
-private const val SCREEN_BOUNDING_BOX_STROKE_RATIO = 0.004f
-private const val SCREEN_BOUNDING_BOX_MIN_STROKE_PX = 2f
-private const val SCREEN_BOUNDING_BOX_MAX_STROKE_PX = 8f
-private val SCREEN_BOUNDING_BOX_COLOR = Color(0xFFFF6B35)
+private const val SCREEN_POLYGON_LIFETIME_MS = 5_000L
+private const val SCREEN_POLYGON_STROKE_RATIO = 0.004f
+private const val SCREEN_POLYGON_MIN_STROKE_PX = 2f
+private const val SCREEN_POLYGON_MAX_STROKE_PX = 8f
+private val SCREEN_POLYGON_COLOR = Color(0xFFFF6B35)

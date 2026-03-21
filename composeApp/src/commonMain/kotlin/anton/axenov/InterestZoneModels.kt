@@ -3,10 +3,10 @@ package anton.axenov
 /**
  * Represents one detected interest zone.
  *
- * @param boundingBox zone location in screenshot pixel coordinates.
+ * @param screenBoundingBox zone location in screenshot pixel coordinates.
  */
 data class DetectedInterestZone(
-    val boundingBox: BoundingBox,
+    val screenBoundingBox: ScreenBoundingBox,
 )
 
 /**
@@ -17,7 +17,7 @@ data class DetectedInterestZone(
  * @param right right X pixel coordinate.
  * @param bottom bottom Y pixel coordinate.
  */
-data class BoundingBox(
+data class ScreenBoundingBox(
     val left: Int,
     val top: Int,
     val right: Int,

@@ -19,18 +19,19 @@ import kotlinx.coroutines.withContext
  * @param coroutineScope scope used to run asynchronous detection work.
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param zoneDetector detector used to extract interest zones from snapshots.
- * @param onTranslationVariantChanged callback invoked when translation variant changes.
+ * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
  */
 class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(),
-    private val onTranslationVariantChanged: (CoordinateTranslationVariant) -> Unit = {},
+    private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
+    private val zonesManager = ZonesManager()
     private val placedSceneNodes = mutableListOf<AnchorNode>()
     private var placedZoneCount = 0
     private var detectionJob: Job? = null
@@ -66,6 +67,7 @@ class ArDetectionPipeline(
         placedSceneNodes.clear()
         placedZoneCount = 0
         baselineLandscapeRotation = null
+        zonesManager.clear()
     }
 
     /**
@@ -130,8 +132,16 @@ class ArDetectionPipeline(
                         }
                         if (translationVariant != lastTranslationVariant) {
                             lastTranslationVariant = translationVariant
-                            onTranslationVariantChanged(translationVariant)
                         }
+                        onTranslationInfoChanged(
+                            TranslationOverlayInfo(
+                                translationVariant = translationVariant,
+                                imageWidth = snapshot.imageWidth,
+                                imageHeight = snapshot.imageHeight,
+                                viewWidth = activeSceneView.width,
+                                viewHeight = activeSceneView.height,
+                            ),
+                        )
                         val detectedZones = zoneDetector.detectZones(
                             screenshot = snapshot.screenshot
                         )
@@ -166,17 +176,23 @@ class ArDetectionPipeline(
                                         translationVariant = translationVariant,
                                     )
                                 }.getOrElse { error ->
-                                    BoundingBoxPlacementResult(
-                                        anchorNode = null,
-                                        pointNodes = emptyList(),
+                                    ZonePlacementResult(
+                                        zone = null,
                                         details =
                                             "Placement aborted: ${error.javaClass.simpleName}: " +
                                                 (error.message ?: "unknown error"),
                                     )
                                 }
-                                if (placementResult.placedNodes.isNotEmpty()) {
-                                    placedSceneNodes += placementResult.placedNodes
-                                    if (placementResult.anchorNode != null) {
+                                if (placementResult.zone != null) {
+                                    zonesManager.addZones(listOf(placementResult.zone))
+                                    val renderedNodes = zonesManager.consumeUndrawnZones().flatMap { zone ->
+                                        drawZone(
+                                            sceneView = activeSceneView,
+                                            zone = zone,
+                                        )
+                                    }
+                                    placedSceneNodes += renderedNodes
+                                    if (renderedNodes.isNotEmpty()) {
                                         placedZoneCount++
                                     }
                                     reportStatus(
@@ -215,6 +231,23 @@ class ArDetectionPipeline(
         }
     }
 }
+
+/**
+ * Translation info displayed in debug overlay.
+ *
+ * @param translationVariant currently selected coordinate translation variant.
+ * @param imageWidth captured camera image width in pixels.
+ * @param imageHeight captured camera image height in pixels.
+ * @param viewWidth AR view width in pixels.
+ * @param viewHeight AR view height in pixels.
+ */
+data class TranslationOverlayInfo(
+    val translationVariant: CoordinateTranslationVariant,
+    val imageWidth: Int,
+    val imageHeight: Int,
+    val viewWidth: Int,
+    val viewHeight: Int,
+)
 
 private const val DETECTION_INTERVAL_MS = 10000L
 private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L

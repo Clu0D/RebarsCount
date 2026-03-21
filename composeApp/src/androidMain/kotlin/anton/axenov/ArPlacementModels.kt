@@ -2,7 +2,6 @@ package anton.axenov
 
 import android.graphics.Bitmap
 import com.google.ar.core.Pose
-import io.github.sceneview.ar.node.AnchorNode
 
 /**
  * Snapshot of one frame used for asynchronous detection and world placement.
@@ -58,16 +57,12 @@ data class DetectionFrameSnapshotCaptureResult(
 )
 
 /**
- * Result of world placement attempt for one detected bounding box.
+ * Result of world placement attempt for one detected zone.
  *
- * @param anchorNode placed anchor node or null when placement failed.
+ * @param zone placed zone data or null when placement failed.
  * @param details detailed diagnostic information.
  */
-data class BoundingBoxPlacementResult(
-    val anchorNode: AnchorNode?,
-    val pointNodes: List<AnchorNode> = emptyList(),
+data class ZonePlacementResult(
+    val zone: Zone?,
     val details: String,
-) {
-    val placedNodes: List<AnchorNode>
-        get() = listOfNotNull(anchorNode) + pointNodes
-}
+)

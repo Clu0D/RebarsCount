@@ -7,7 +7,7 @@ import kotlin.random.Random
 /**
  * Detects zones of interest on a screenshot.
  *
- * This is a dummy implementation that returns exactly one random bounding box.
+ * This is a dummy implementation that returns exactly one random polygon.
  *
  * @param random random source used for deterministic tests when needed.
  */
@@ -18,7 +18,7 @@ class DetectInterestZones(
      * Detects zones of interest on a screenshot.
      *
      * @param screenshot screenshot captured from camera frame.
-     * @return list with one random zone bounding box.
+     * @return list with one random zone polygon.
      */
     fun detectZones(
         screenshot: Bitmap
@@ -41,7 +41,7 @@ class DetectInterestZones(
         val bottom = (top + boxHeight).coerceAtMost(height - 1)
         return listOf(
             DetectedInterestZone(
-                boundingBox = translateCoordinates(
+                screenBoundingBox = ScreenBoundingBox(
                     left = left,
                     top = top,
                     right = right,

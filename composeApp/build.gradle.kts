@@ -37,6 +37,11 @@ kotlin {
             implementation(libs.sceneview.arsceneview)
             implementation(libs.commons.math3)
         }
+        androidUnitTest.dependencies {
+            implementation(libs.kotest.runner.junit5)
+            implementation(libs.kotest.assertions.core)
+            implementation(libs.mockk)
+        }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -61,6 +66,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.kotest.runner.junit5)
             implementation(libs.kotest.assertions.core)
+            implementation(libs.mockk)
         }
     }
 }
