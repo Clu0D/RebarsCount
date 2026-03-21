@@ -22,6 +22,7 @@ data class Zone(
  */
 class ZonesManager {
     private val zones = mutableListOf<Zone>()
+    private val queuedZonesToRemove = mutableListOf<Zone>()
     private var consumedZoneCount = 0
 
     /**
@@ -31,6 +32,20 @@ class ZonesManager {
      */
     fun addZones(newZones: List<Zone>) {
         zones.addAll(newZones)
+    }
+
+    /**
+     * Adds zones to removal queue.
+     *
+     * Queued zones are removed when [consumeQueuedRemovedZones] is called.
+     *
+     * @param zonesToRemove zones that should be removed.
+     */
+    fun addZonesToRemove(zonesToRemove: List<Zone>) {
+        if (zonesToRemove.isEmpty()) {
+            return
+        }
+        queuedZonesToRemove += zonesToRemove
     }
 
     /**
@@ -50,10 +65,56 @@ class ZonesManager {
     }
 
     /**
+     * Removes requested zones from manager storage.
+     *
+     * @param zonesToRemove zones that should be removed.
+     * @return actually removed zones that existed in manager.
+     */
+    fun removeZones(zonesToRemove: List<Zone>): List<Zone> {
+        if (zonesToRemove.isEmpty() || zones.isEmpty()) {
+            return emptyList()
+        }
+
+        val removeSet = zonesToRemove.toSet()
+        val removedZones = mutableListOf<Zone>()
+        var removedFromConsumedPrefix = 0
+        var originalIndex = 0
+        val iterator = zones.listIterator()
+        while (iterator.hasNext()) {
+            val zone = iterator.next()
+            if (zone in removeSet) {
+                iterator.remove()
+                removedZones += zone
+                if (originalIndex < consumedZoneCount) {
+                    removedFromConsumedPrefix++
+                }
+            }
+            originalIndex++
+        }
+        consumedZoneCount = (consumedZoneCount - removedFromConsumedPrefix).coerceAtLeast(0)
+        return removedZones
+    }
+
+    /**
+     * Removes all currently queued zones and clears removal queue.
+     *
+     * @return actually removed zones that existed in manager.
+     */
+    fun consumeQueuedRemovedZones(): List<Zone> {
+        if (queuedZonesToRemove.isEmpty()) {
+            return emptyList()
+        }
+        val removedZones = removeZones(queuedZonesToRemove)
+        queuedZonesToRemove.clear()
+        return removedZones
+    }
+
+    /**
      * Clears all stored zones and resets consumption state.
      */
     fun clear() {
         zones.clear()
+        queuedZonesToRemove.clear()
         consumedZoneCount = 0
     }
 }

@@ -33,6 +33,7 @@ class ArDetectionPipeline(
     private var sceneView: ARSceneView? = null
     private val zonesManager = ZonesManager()
     private val placedSceneNodes = mutableListOf<AnchorNode>()
+    private val renderedNodesByZone = mutableMapOf<Zone, List<AnchorNode>>()
     private var placedZoneCount = 0
     private var detectionJob: Job? = null
     private var lastDetectionAtMs = 0L
@@ -65,6 +66,7 @@ class ArDetectionPipeline(
             runCatching { node.destroy() }
         }
         placedSceneNodes.clear()
+        renderedNodesByZone.clear()
         placedZoneCount = 0
         baselineLandscapeRotation = null
         zonesManager.clear()
@@ -79,6 +81,7 @@ class ArDetectionPipeline(
         if (!isSceneActive.get()) {
             return
         }
+
         if (!asyncPlacementNoticeShown) {
             asyncPlacementNoticeShown = true
             reportStatus(
@@ -185,6 +188,7 @@ class ArDetectionPipeline(
                                 }
                                 if (placementResult.zone != null) {
                                     zonesManager.addZones(listOf(placementResult.zone))
+                                    removeQueuedZonesFromWorld()
                                     val renderedNodes = zonesManager.consumeUndrawnZones().flatMap { zone ->
                                         drawZone(
                                             sceneView = activeSceneView,
@@ -192,6 +196,7 @@ class ArDetectionPipeline(
                                         )
                                     }
                                     placedSceneNodes += renderedNodes
+                                    renderedNodesByZone[placementResult.zone] = renderedNodes
                                     if (renderedNodes.isNotEmpty()) {
                                         placedZoneCount++
                                     }
@@ -229,6 +234,30 @@ class ArDetectionPipeline(
                 false,
             )
         }
+    }
+
+    /**
+     * Removes all queued zones and destroys corresponding rendered nodes.
+     */
+    private fun removeQueuedZonesFromWorld() {
+        val removedZones = zonesManager.consumeQueuedRemovedZones()
+        if (removedZones.isEmpty()) {
+            return
+        }
+        var removedNodesCount = 0
+        removedZones.forEach { zone ->
+            val zoneNodes = renderedNodesByZone.remove(zone).orEmpty()
+            zoneNodes.forEach { node ->
+                runCatching { node.destroy() }
+            }
+            placedSceneNodes.removeAll(zoneNodes.toSet())
+            removedNodesCount += zoneNodes.size
+        }
+        placedZoneCount = renderedNodesByZone.size
+        reportStatus(
+            "Removed ${removedZones.size} zone(s) and $removedNodesCount scene node(s) from world.",
+            true,
+        )
     }
 }
 
