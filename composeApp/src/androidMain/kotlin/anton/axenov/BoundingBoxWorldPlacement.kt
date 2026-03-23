@@ -10,18 +10,18 @@ import korlibs.math.geom.Vector3F as Vector3
  *
  * @param sceneView active SceneView AR view.
  * @param snapshot immutable snapshot captured from a specific frame.
- * @param zone detected zone that belongs to the same snapshot screenshot.
+ * @param detectedZone that belongs to the same snapshot screenshot.
  * @param translationVariant detector-to-image translation variant used for sampled points.
  * @return zone placement result with diagnostics.
  */
 fun placeZoneInWorld(
     sceneView: ARSceneView,
     snapshot: DetectionFrameSnapshot,
-    zone: DetectedInterestZone,
+    detectedZone: DetectedInterestZone,
     translationVariant: CoordinateTranslationVariant,
 ): ZonePlacementResult {
     val imagePoints = sampleImagePointsInScreenBoundingBox(
-        screenBoundingBox = zone.screenBoundingBox,
+        screenBoundingBox = detectedZone.screenBoundingBox,
         imageWidth = snapshot.imageWidth,
         imageHeight = snapshot.imageHeight,
         count = DEPTH_SAMPLE_POINT_COUNT,
@@ -79,17 +79,24 @@ fun placeZoneInWorld(
     val fittedPlanePose = planeFit.pose
         ?: return failedPlacement("$placementSummary. Plane fit failed: ${planeFit.details}")
 
-    return placeFromPose(
+    val projectionInput = buildZoneProjectionInput(
         snapshot = snapshot,
-        zone = zone,
+        zone = detectedZone,
         translationVariant = translationVariant,
+    )
+    val zone = Zone(
+        sampledPoints = worldPoints,
         planePose = fittedPlanePose,
-        worldPoints = worldPoints,
-        successDetailsPrefix =
-            "$placementSummary. " +
-                    "Estimated depth=${planeFit.depthMeters ?: -1f}m. " +
-                    "Plane fit: ${planeFit.details}. " +
-                    "Note: hit tests use current frame, not captured frame ${snapshot.frameTimestamp}.",
+        projectionInput = projectionInput,
+    )
+    return ZonePlacementResult(
+        zone = zone,
+        details = "$placementSummary. " +
+                "Estimated depth=${planeFit.depthMeters ?: -1f}m. " +
+                "Plane fit: ${planeFit.details}. " +
+                "Note: hit tests use current frame, not captured frame ${snapshot.frameTimestamp}." +
+                "projectedCorners=${zone.polygonPoints.size}, " +
+                "sampledPoints=${worldPoints.size}",
     )
 }
 
@@ -126,10 +133,19 @@ private fun placePointWithDepth(
     snapshot: DetectionFrameSnapshot,
     imagePoint: ImagePoint,
 ): PointPlacement? {
-    val projection = projectImagePointToWorld(snapshot, imagePoint.x, imagePoint.y)
-    val worldPoint = projection.worldPoint ?: return null
+    val clampedX = imagePoint.x.coerceIn(0, snapshot.imageWidth - 1)
+    val clampedY = imagePoint.y.coerceIn(0, snapshot.imageHeight - 1)
+    val depthSample = sampleDepthMeters(snapshot, clampedX, clampedY)
+    val depthMeters = depthSample.depthMeters
+        ?: return null
+
+    val xCamera = (clampedX - snapshot.principalPointX) / snapshot.focalLengthX * depthMeters
+    val yCamera = -(clampedY - snapshot.principalPointY) / snapshot.focalLengthY * depthMeters
+    val zCamera = -depthMeters
+    val worldPoint = snapshot.cameraPose.transformPoint(floatArrayOf(xCamera, yCamera, zCamera))
+
     return PointPlacement(
-        worldPoint = worldPoint,
+        worldPoint = Vector3(worldPoint[0], worldPoint[1], worldPoint[2]),
         method = PointPlacementMethod.DEPTH,
     )
 }
@@ -204,144 +220,39 @@ private fun failedPlacement(details: String): ZonePlacementResult {
     )
 }
 
-/**
- * Builds a world-space zone polygon by intersecting screen-corner rays with fitted infinite plane.
- *
- * @param snapshot frame snapshot with camera intrinsics.
- * @param zone detected zone used for corner projection.
- * @param translationVariant detector-to-image translation variant for zone polygon corners.
- * @param planePose fitted infinite plane used as projection target.
- * @param successDetailsPrefix details prefix when placement succeeds.
- * @return zone placement result.
- */
-private fun placeFromPose(
-    snapshot: DetectionFrameSnapshot,
-    zone: DetectedInterestZone,
-    translationVariant: CoordinateTranslationVariant,
-    planePose: PlanePose,
-    worldPoints: List<Vector3>,
-    successDetailsPrefix: String,
-): ZonePlacementResult {
-    val projectedCornerPoints = projectZonePolygonToInfinitePlane(
-        snapshot = snapshot,
-        zone = zone,
-        translationVariant = translationVariant,
-        planePose = planePose,
-    )
-    if (projectedCornerPoints == null) {
-        return failedPlacement("$successDetailsPrefix Polygon projection failed for one or more corners.")
-    }
-    return ZonePlacementResult(
-        zone = Zone(
-            polygonPoints = projectedCornerPoints,
-            sampledPoints = worldPoints,
-            planePose = planePose,
-        ),
-        details =
-            "$successDetailsPrefix " +
-                    "projectedCorners=${projectedCornerPoints.size}, " +
-                    "sampledPoints=${worldPoints.size}",
-    )
-}
 
 /**
- * Projects translated screen-space zone polygon corners to a fitted infinite plane.
+ * Builds full zone projection input payload from captured snapshot and detected screen zone.
  *
  * @param snapshot captured frame snapshot.
  * @param zone detected zone in detector coordinates.
  * @param translationVariant detector-to-image translation variant.
- * @param planePose projection plane.
- * @return four projected world-space polygon points or null when projection fails for any point.
+ * @return projection payload that can be reused for zone reprojection.
  */
-private fun projectZonePolygonToInfinitePlane(
+private fun buildZoneProjectionInput(
     snapshot: DetectionFrameSnapshot,
     zone: DetectedInterestZone,
     translationVariant: CoordinateTranslationVariant,
-    planePose: PlanePose,
-): List<Vector3>? {
-    val translatedCorners = listOf(
-        ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.top),
-        ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.top),
-        ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.bottom),
-        ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.bottom),
-    ).map { corner ->
-        translateCoordinates(
-            x = corner.x,
-            y = corner.y,
-            width = snapshot.imageWidth,
-            height = snapshot.imageHeight,
-            translationVariant = translationVariant,
-        )
+): ZoneProjectionInput {
+    val cameraToWorldMatrix = FloatArray(CAMERA_MATRIX_SIZE).also { matrix ->
+        snapshot.cameraPose.toMatrix(matrix, 0)
     }
-    val projectedCorners = translatedCorners.map { corner ->
-        projectImagePointToPlane(
-            snapshot = snapshot,
-            imagePoint = corner,
-            planePose = planePose,
-        )
-    }
-    if (projectedCorners.any { it == null }) {
-        return null
-    }
-    return projectedCorners.map { it!! }
-}
-
-/**
- * Projects one image-space point onto a world-space plane via camera intrinsics and camera pose.
- *
- * @param snapshot captured frame snapshot.
- * @param imagePoint image-space point to project.
- * @param planePose projection plane.
- * @return world-space intersection point or null when the ray is parallel to plane or behind camera.
- */
-private fun projectImagePointToPlane(
-    snapshot: DetectionFrameSnapshot,
-    imagePoint: ImagePoint,
-    planePose: PlanePose,
-): Vector3? {
-    if (
-        snapshot.imageWidth <= 0 ||
-        snapshot.imageHeight <= 0 ||
-        snapshot.focalLengthX == 0f ||
-        snapshot.focalLengthY == 0f
-    ) {
-        return null
-    }
-    val imageX = imagePoint.x.coerceIn(0, snapshot.imageWidth - 1)
-    val imageY = imagePoint.y.coerceIn(0, snapshot.imageHeight - 1)
-
-    val directionCamera = Vector3(
-        x = (imageX - snapshot.principalPointX) / snapshot.focalLengthX,
-        y = -(imageY - snapshot.principalPointY) / snapshot.focalLengthY,
-        z = -1f,
-    ).normalized()
-    val rayOrigin = Vector3(
-        x = snapshot.cameraPose.tx(),
-        y = snapshot.cameraPose.ty(),
-        z = snapshot.cameraPose.tz(),
-    )
-    val rayPointWorld = snapshot.cameraPose.transformPoint(
-        floatArrayOf(
-            directionCamera.x,
-            directionCamera.y,
-            directionCamera.z,
+    return ZoneProjectionInput(
+        originalScreenPolygon = listOf(
+            ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.top),
+            ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.top),
+            ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.bottom),
+            ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.bottom),
         ),
+        translationVariant = translationVariant,
+        imageWidth = snapshot.imageWidth,
+        imageHeight = snapshot.imageHeight,
+        focalLengthX = snapshot.focalLengthX,
+        focalLengthY = snapshot.focalLengthY,
+        principalPointX = snapshot.principalPointX,
+        principalPointY = snapshot.principalPointY,
+        cameraToWorldMatrix = cameraToWorldMatrix,
     )
-    val rayDirection = Vector3(
-        x = rayPointWorld[0] - rayOrigin.x,
-        y = rayPointWorld[1] - rayOrigin.y,
-        z = rayPointWorld[2] - rayOrigin.z,
-    ).normalized()
-
-    val denominator = planePose.normal.dot(rayDirection)
-    if (kotlin.math.abs(denominator) <= RAY_PLANE_EPSILON) {
-        return null
-    }
-    val distance = planePose.normal.dot(planePose.center - rayOrigin) / denominator
-    if (distance <= 0f) {
-        return null
-    }
-    return rayOrigin + rayDirection * distance
 }
 
 
@@ -434,40 +345,6 @@ private fun sampleDepthMeters(
 }
 
 /**
- * Projects one image-space point to world coordinates using snapshot depth and intrinsics.
- *
- * @param snapshot captured frame snapshot.
- * @param imageX image-space X coordinate.
- * @param imageY image-space Y coordinate.
- * @return projection attempt result.
- */
-private fun projectImagePointToWorld(
-    snapshot: DetectionFrameSnapshot,
-    imageX: Int,
-    imageY: Int,
-): ImagePointProjectionAttempt {
-    val clampedX = imageX.coerceIn(0, snapshot.imageWidth - 1)
-    val clampedY = imageY.coerceIn(0, snapshot.imageHeight - 1)
-    val depthSample = sampleDepthMeters(snapshot, clampedX, clampedY)
-    val depthMeters = depthSample.depthMeters
-        ?: return ImagePointProjectionAttempt(
-            worldPoint = null,
-            depthMeters = null,
-            details = "Depth sample failed at image($clampedX,$clampedY): ${depthSample.details}",
-        )
-
-    val xCamera = (clampedX - snapshot.principalPointX) / snapshot.focalLengthX * depthMeters
-    val yCamera = -(clampedY - snapshot.principalPointY) / snapshot.focalLengthY * depthMeters
-    val zCamera = -depthMeters
-    val worldPoint = snapshot.cameraPose.transformPoint(floatArrayOf(xCamera, yCamera, zCamera))
-    return ImagePointProjectionAttempt(
-        worldPoint = Vector3(worldPoint[0], worldPoint[1], worldPoint[2]),
-        depthMeters = depthMeters,
-        details = "Point image($clampedX,$clampedY) -> camera($xCamera,$yCamera,$zCamera)",
-    )
-}
-
-/**
  * Samples random SceneView points inside zone and always includes center.
  *
  * @param snapshot frame snapshot.
@@ -538,19 +415,6 @@ private data class PointPlacement(
 )
 
 /**
- * Result of image-point projection attempt.
- *
- * @param worldPoint projected world point or null when projection failed.
- * @param depthMeters sampled depth in meters.
- * @param details projection diagnostics.
- */
-private data class ImagePointProjectionAttempt(
-    val worldPoint: Vector3?,
-    val depthMeters: Float?,
-    val details: String,
-)
-
-/**
  * Result of one depth sampling attempt.
  *
  * @param depthMeters sampled depth in meters or null when unavailable.
@@ -568,4 +432,4 @@ private const val MILLIMETERS_IN_METER = 1000f
 private const val DEPTH_SAMPLE_RADIUS_PX = 4
 private const val DEPTH_SAMPLE_POINT_COUNT = 20
 private const val PLANE_MIN_POINT_COUNT = 6
-private const val RAY_PLANE_EPSILON = 1e-5f
+private const val CAMERA_MATRIX_SIZE = 16

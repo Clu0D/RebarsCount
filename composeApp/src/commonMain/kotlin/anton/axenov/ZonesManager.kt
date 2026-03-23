@@ -10,12 +10,15 @@ import kotlin.math.min
  * @param polygonPoints projected zone polygon points in world coordinates.
  * @param sampledPoints sampled world points used to estimate infinite plane.
  * @param planePose mathematical parameters of fitted infinite plane.
+ * @param projectionInput original projection payload used to build polygon points.
  */
 data class Zone(
-    val polygonPoints: List<Vector3>,
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
+    val projectionInput: ZoneProjectionInput? = null,
 ) {
+    val polygonPoints: List<Vector3> by lazy { projectionInput?.projectToPlane(planePose) ?: listOf() }
+
     val boundingBox: ZoneBoundingBox3d by lazy {
         val basePoints = when {
             polygonPoints.isNotEmpty() -> polygonPoints
@@ -44,6 +47,118 @@ data class Zone(
             maxY = maxY + padding,
             maxZ = maxZ + padding,
         )
+    }
+}
+
+/**
+ * Full projection payload required to reproject one zone polygon onto any plane.
+ *
+ * @param originalScreenPolygon detector-space polygon points before translation.
+ * @param translationVariant detector-to-image translation variant.
+ * @param imageWidth captured image width.
+ * @param imageHeight captured image height.
+ * @param focalLengthX camera focal length X in pixels.
+ * @param focalLengthY camera focal length Y in pixels.
+ * @param principalPointX camera principal point X in pixels.
+ * @param principalPointY camera principal point Y in pixels.
+ * @param cameraToWorldMatrix camera pose matrix in OpenGL column-major form.
+ */
+class ZoneProjectionInput(
+    val originalScreenPolygon: List<ImagePoint>,
+    val translationVariant: CoordinateTranslationVariant,
+    val imageWidth: Int,
+    val imageHeight: Int,
+    val focalLengthX: Float,
+    val focalLengthY: Float,
+    val principalPointX: Float,
+    val principalPointY: Float,
+    val cameraToWorldMatrix: FloatArray,
+) {
+    /**
+     * Returns camera world position extracted from [cameraToWorldMatrix].
+     *
+     * @return camera world position.
+     */
+    fun cameraPosition(): Vector3 {
+        return Vector3(
+            x = cameraToWorldMatrix[12],
+            y = cameraToWorldMatrix[13],
+            z = cameraToWorldMatrix[14],
+        )
+    }
+
+    /**
+     * Projects original on-screen polygon onto [planePose].
+     *
+     * @param planePose projection plane.
+     * @return projected world-space polygon or null when at least one corner cannot be projected.
+     */
+    fun projectToPlane(planePose: PlanePose): List<Vector3>? {
+        val translatedCorners = originalScreenPolygon.map { corner ->
+            translateCoordinates(
+                x = corner.x,
+                y = corner.y,
+                width = imageWidth,
+                height = imageHeight,
+                translationVariant = translationVariant,
+            )
+        }
+        val projectedCorners = translatedCorners.map { corner ->
+            projectImagePointToPlane(
+                imagePoint = corner,
+                planePose = planePose,
+            )
+        }
+        if (projectedCorners.any { it == null }) {
+            return null
+        }
+        return projectedCorners.map { it!! }
+    }
+
+    /**
+     * Projects one image-space point to [planePose].
+     *
+     * @param imagePoint image-space point to project.
+     * @param planePose projection plane.
+     * @return world-space intersection or null when ray is parallel to plane or intersects behind camera.
+     */
+    private fun projectImagePointToPlane(
+        imagePoint: ImagePoint,
+        planePose: PlanePose,
+    ): Vector3? {
+        if (
+            imageWidth <= 0 ||
+            imageHeight <= 0 ||
+            focalLengthX == 0f ||
+            focalLengthY == 0f
+        ) {
+            return null
+        }
+        val imageX = imagePoint.x.coerceIn(0, imageWidth - 1)
+        val imageY = imagePoint.y.coerceIn(0, imageHeight - 1)
+
+        val directionCamera = Vector3(
+            x = (imageX - principalPointX) / focalLengthX,
+            y = -(imageY - principalPointY) / focalLengthY,
+            z = -1f,
+        ).normalized()
+        val matrix = cameraToWorldMatrix
+        val rayOrigin = cameraPosition()
+        val rayDirection = Vector3(
+            x = matrix[0] * directionCamera.x + matrix[4] * directionCamera.y + matrix[8] * directionCamera.z,
+            y = matrix[1] * directionCamera.x + matrix[5] * directionCamera.y + matrix[9] * directionCamera.z,
+            z = matrix[2] * directionCamera.x + matrix[6] * directionCamera.y + matrix[10] * directionCamera.z,
+        ).normalized()
+
+        val denominator = planePose.normal.dot(rayDirection)
+        if (kotlin.math.abs(denominator) <= RAY_PLANE_EPSILON) {
+            return null
+        }
+        val distance = planePose.normal.dot(planePose.center - rayOrigin) / denominator
+        if (distance <= 0f) {
+            return null
+        }
+        return rayOrigin + rayDirection * distance
     }
 }
 
@@ -259,10 +374,14 @@ class ZonesManager(
         if (removedZones.isNotEmpty()) {
             queuedZonesToRemove += removedZones
         }
+        val mergedSampledPoints = newZone.sampledPoints + removedZones.flatMap { it.sampledPoints }
+        val mergedPlanePose = fitPlanePoseFromPoints(
+            worldPoints = mergedSampledPoints,
+            cameraPosition = newZone.projectionInput?.cameraPosition() ?: newZone.planePose.center,
+            minPointCount = MERGE_PLANE_MIN_POINT_COUNT,
+        ).pose ?: newZone.planePose
         return ZoneMergeResult(
-            zone = newZone.copy(
-                sampledPoints = newZone.sampledPoints + removedZones.flatMap { it.sampledPoints },
-            ),
+            zone = Zone(mergedSampledPoints, mergedPlanePose, newZone.projectionInput),
             intersectingZonesCount = removedZones.size,
             maxOverlapPercent = maxOverlapPercent,
         )
@@ -303,3 +422,5 @@ private const val BOUNDING_BOX_PADDING_RATIO = 0.1f
 private const val BOX_INTERSECTION_THRESHOLD = 0.3f
 private const val MIN_PADDING_METERS = 0.05f
 private const val MIN_BOX_VOLUME_EPSILON = 1e-8f
+private const val RAY_PLANE_EPSILON = 1e-5f
+private const val MERGE_PLANE_MIN_POINT_COUNT = 3

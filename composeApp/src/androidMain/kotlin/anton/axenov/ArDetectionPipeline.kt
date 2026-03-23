@@ -161,7 +161,7 @@ class ArDetectionPipeline(
                                 return@withContext
                             }
 
-                            detectedZones.forEachIndexed { index, zone ->
+                            detectedZones.forEachIndexed { index, detectedZone ->
                                 if (!isSceneActive.get() || sceneView !== activeSceneView) {
                                     reportStatus(
                                         "Zone placement stopped: scene was recreated/disposed during async detection.",
@@ -174,7 +174,7 @@ class ArDetectionPipeline(
                                     placeZoneInWorld(
                                         sceneView = activeSceneView,
                                         snapshot = snapshot,
-                                        zone = zone,
+                                        detectedZone = detectedZone,
                                         translationVariant = translationVariant,
                                     )
                                 }.getOrElse { error ->
