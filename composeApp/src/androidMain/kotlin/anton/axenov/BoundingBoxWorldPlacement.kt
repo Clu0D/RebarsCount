@@ -226,8 +226,7 @@ private fun placeFromPose(
         snapshot = snapshot,
         zone = zone,
         translationVariant = translationVariant,
-        planeCenter = planePose.center,
-        planeNormal = planePose.normal,
+        planePose = planePose,
     )
     if (projectedCornerPoints == null) {
         return failedPlacement("$successDetailsPrefix Polygon projection failed for one or more corners.")
@@ -240,8 +239,8 @@ private fun placeFromPose(
         ),
         details =
             "$successDetailsPrefix " +
-                "projectedCorners=${projectedCornerPoints.size}, " +
-                "sampledPoints=${worldPoints.size}",
+                    "projectedCorners=${projectedCornerPoints.size}, " +
+                    "sampledPoints=${worldPoints.size}",
     )
 }
 
@@ -251,16 +250,14 @@ private fun placeFromPose(
  * @param snapshot captured frame snapshot.
  * @param zone detected zone in detector coordinates.
  * @param translationVariant detector-to-image translation variant.
- * @param planeCenter one point on the projection target plane.
- * @param planeNormal normalized projection target plane normal.
+ * @param planePose projection plane.
  * @return four projected world-space polygon points or null when projection fails for any point.
  */
 private fun projectZonePolygonToInfinitePlane(
     snapshot: DetectionFrameSnapshot,
     zone: DetectedInterestZone,
     translationVariant: CoordinateTranslationVariant,
-    planeCenter: Vector3,
-    planeNormal: Vector3,
+    planePose: PlanePose,
 ): List<Vector3>? {
     val translatedCorners = listOf(
         ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.top),
@@ -280,8 +277,7 @@ private fun projectZonePolygonToInfinitePlane(
         projectImagePointToPlane(
             snapshot = snapshot,
             imagePoint = corner,
-            planeCenter = planeCenter,
-            planeNormal = planeNormal,
+            planePose = planePose,
         )
     }
     if (projectedCorners.any { it == null }) {
@@ -295,15 +291,13 @@ private fun projectZonePolygonToInfinitePlane(
  *
  * @param snapshot captured frame snapshot.
  * @param imagePoint image-space point to project.
- * @param planeCenter one point on the projection plane.
- * @param planeNormal normalized projection plane normal.
+ * @param planePose projection plane.
  * @return world-space intersection point or null when the ray is parallel to plane or behind camera.
  */
 private fun projectImagePointToPlane(
     snapshot: DetectionFrameSnapshot,
     imagePoint: ImagePoint,
-    planeCenter: Vector3,
-    planeNormal: Vector3,
+    planePose: PlanePose,
 ): Vector3? {
     if (
         snapshot.imageWidth <= 0 ||
@@ -339,11 +333,11 @@ private fun projectImagePointToPlane(
         z = rayPointWorld[2] - rayOrigin.z,
     ).normalized()
 
-    val denominator = planeNormal.dot(rayDirection)
+    val denominator = planePose.normal.dot(rayDirection)
     if (kotlin.math.abs(denominator) <= RAY_PLANE_EPSILON) {
         return null
     }
-    val distance = planeNormal.dot(planeCenter - rayOrigin) / denominator
+    val distance = planePose.normal.dot(planePose.center - rayOrigin) / denominator
     if (distance <= 0f) {
         return null
     }

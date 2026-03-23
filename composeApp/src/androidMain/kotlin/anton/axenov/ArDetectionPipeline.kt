@@ -6,7 +6,6 @@ import com.google.ar.core.Frame
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
-import java.util.Locale
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -291,6 +290,6 @@ data class TranslationOverlayInfo(
     val viewHeight: Int,
 )
 
-private const val DETECTION_INTERVAL_MS = 10000L
+private const val DETECTION_INTERVAL_MS = 5000L
 private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L
 private const val FRAME_STATUS_INTERVAL_MS = 1000L
