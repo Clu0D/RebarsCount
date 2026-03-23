@@ -13,7 +13,67 @@ data class Zone(
     val polygonPoints: List<Vector3>,
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
-)
+) {
+    val boundingBox: ZoneBoundingBox3d by lazy {
+        val basePoints = when {
+            polygonPoints.isNotEmpty() -> polygonPoints
+            sampledPoints.isNotEmpty() -> sampledPoints
+            else -> listOf(planePose.center)
+        }
+
+        val minX = basePoints.minOf { it.x }
+        val minY = basePoints.minOf { it.y }
+        val minZ = basePoints.minOf { it.z }
+        val maxX = basePoints.maxOf { it.x }
+        val maxY = basePoints.maxOf { it.y }
+        val maxZ = basePoints.maxOf { it.z }
+
+        val sizeX = maxX - minX
+        val sizeY = maxY - minY
+        val sizeZ = maxZ - minZ
+        val maxSize = max(max(sizeX, sizeY), sizeZ)
+        val padding = max(maxSize * BOUNDING_BOX_PADDING_RATIO, MIN_PADDING_METERS)
+
+        ZoneBoundingBox3d(
+            minX = minX - padding,
+            minY = minY - padding,
+            minZ = minZ - padding,
+            maxX = maxX + padding,
+            maxY = maxY + padding,
+            maxZ = maxZ + padding,
+        )
+    }
+}
+
+/**
+ * Axis-aligned 3D bounds used to compare zone overlap.
+ *
+ * @param minX minimum X coordinate.
+ * @param minY minimum Y coordinate.
+ * @param minZ minimum Z coordinate.
+ * @param maxX maximum X coordinate.
+ * @param maxY maximum Y coordinate.
+ * @param maxZ maximum Z coordinate.
+ */
+data class ZoneBoundingBox3d(
+    val minX: Float,
+    val minY: Float,
+    val minZ: Float,
+    val maxX: Float,
+    val maxY: Float,
+    val maxZ: Float,
+) {
+    /**
+     * Computes this box volume.
+     *
+     * @return positive box volume.
+     */
+    fun volume(): Float {
+        return (maxX - minX).coerceAtLeast(0f) *
+                (maxY - minY).coerceAtLeast(0f) *
+                (maxZ - minZ).coerceAtLeast(0f)
+    }
+}
 
 /**
  * Stores all world-space zones and exposes only zones that were not drawn yet.
@@ -117,4 +177,37 @@ class ZonesManager {
         queuedZonesToRemove.clear()
         consumedZoneCount = 0
     }
+
+    /**
+     * Computes overlap ratio between one zone and all stored zones.
+     *
+     * @param zone zone to compare against stored ones.
+     * @return pairs of `(storedZone, overlapRatio)`.
+     */
+    private fun findZoneOverlaps(zone: Zone): List<Pair<Zone, Float>> {
+        val zoneBoundingBox = zone.boundingBox
+        return zones
+            .asSequence()
+            .filter { storedZone -> storedZone !== zone }
+            .map { storedZone ->
+                storedZone to zoneBoundingBox.overlapRatioBySmallerBox(storedZone.boundingBox)
+            }
+            .toList()
+    }
 }
+
+/**
+ * One zone merge result.
+ *
+ * @param zone zone that should be stored after merge.
+ * @param intersectingZonesCount merge statistics.
+ * @param maxOverlapPercent merge statistics.
+ */
+private data class ZoneMergeResult(
+    val zone: Zone,
+    val intersectingZonesCount: Int,
+    val maxOverlapPercent: Float,
+)
+
+private const val BOUNDING_BOX_PADDING_RATIO = 0.1f
+private const val MIN_PADDING_METERS = 0.05f

@@ -6,6 +6,8 @@ import com.google.ar.core.Frame
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
+import java.util.Locale
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +22,7 @@ import kotlinx.coroutines.withContext
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param zoneDetector detector used to extract interest zones from snapshots.
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
+ * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
  */
 class ArDetectionPipeline(
@@ -27,14 +30,14 @@ class ArDetectionPipeline(
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(),
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
+    private val onMergeInfoChanged: (String) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
     private val zonesManager = ZonesManager()
     private val placedSceneNodes = mutableListOf<AnchorNode>()
-    private val renderedNodesByZone = mutableMapOf<Zone, List<AnchorNode>>()
-    private var placedZoneCount = 0
+    private val renderedNodesByZone = IdentityHashMap<Zone, List<AnchorNode>>()
     private var detectionJob: Job? = null
     private var lastDetectionAtMs = 0L
     private var lastCaptureFailureAtMs = 0L
@@ -67,7 +70,6 @@ class ArDetectionPipeline(
         }
         placedSceneNodes.clear()
         renderedNodesByZone.clear()
-        placedZoneCount = 0
         baselineLandscapeRotation = null
         zonesManager.clear()
     }
@@ -188,18 +190,24 @@ class ArDetectionPipeline(
                                 }
                                 if (placementResult.zone != null) {
                                     zonesManager.addZones(listOf(placementResult.zone))
+                                    val mergeInfo = zonesManager.consumeMergeDebugInfos()
+                                    val mergeMessage = "Merge debug: $mergeInfo"
+                                    onMergeInfoChanged(mergeMessage)
+                                    reportStatus(
+                                        mergeMessage,
+                                        true,
+                                    )
                                     removeQueuedZonesFromWorld()
-                                    val renderedNodes = zonesManager.consumeUndrawnZones().flatMap { zone ->
-                                        drawZone(
+                                    val undrawnZones = zonesManager.consumeUndrawnZones()
+                                    val renderedNodes = undrawnZones.flatMap { drawnZone ->
+                                        val drawnNodes = drawZone(
                                             sceneView = activeSceneView,
-                                            zone = zone,
+                                            zone = drawnZone,
                                         )
+                                        renderedNodesByZone[drawnZone] = drawnNodes
+                                        drawnNodes
                                     }
                                     placedSceneNodes += renderedNodes
-                                    renderedNodesByZone[placementResult.zone] = renderedNodes
-                                    if (renderedNodes.isNotEmpty()) {
-                                        placedZoneCount++
-                                    }
                                     reportStatus(
                                         "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
                                             "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
@@ -230,7 +238,7 @@ class ArDetectionPipeline(
         if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
             lastStatusAtMs = now
             reportStatus(
-                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=$placedZoneCount, sceneNodes=${placedSceneNodes.size}",
+                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${placedSceneNodes.size}",
                 false,
             )
         }
@@ -245,17 +253,21 @@ class ArDetectionPipeline(
             return
         }
         var removedNodesCount = 0
+        var removedZonesWithoutSceneNodes = 0
         removedZones.forEach { zone ->
             val zoneNodes = renderedNodesByZone.remove(zone).orEmpty()
+            if (zoneNodes.isEmpty()) {
+                removedZonesWithoutSceneNodes++
+            }
             zoneNodes.forEach { node ->
                 runCatching { node.destroy() }
             }
             placedSceneNodes.removeAll(zoneNodes.toSet())
             removedNodesCount += zoneNodes.size
         }
-        placedZoneCount = renderedNodesByZone.size
         reportStatus(
-            "Removed ${removedZones.size} zone(s) and $removedNodesCount scene node(s) from world.",
+            "Removed ${removedZones.size} zone(s), $removedNodesCount scene node(s), " +
+                    "missingSceneMappings=$removedZonesWithoutSceneNodes.",
             true,
         )
     }

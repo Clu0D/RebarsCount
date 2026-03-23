@@ -2,8 +2,10 @@ package anton.axenov
 
 import com.google.ar.core.Anchor
 import com.google.ar.core.Pose
+import com.google.ar.core.Session
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
+import io.github.sceneview.math.Color
 import io.github.sceneview.node.CubeNode
 import kotlin.math.max
 import korlibs.math.geom.Quaternion as Quaternion
@@ -28,7 +30,11 @@ fun drawZone(
         sceneView = sceneView,
         worldPoints = zone.sampledPoints,
     )
-    return polygonNodes + pointNodes
+    val zoneBoundingBoxNodes = createZoneBoundingBoxNodes(
+        sceneView = sceneView,
+        zone = zone,
+    )
+    return polygonNodes + pointNodes + zoneBoundingBoxNodes
 }
 
 /**
@@ -78,28 +84,17 @@ fun createPolygonMarkerNodes(
     return polygonPoints.indices.mapNotNull { index ->
         val start = polygonPoints[index]
         val end = polygonPoints[(index + 1) % polygonPoints.size]
-        val edgeVector = end - start
-        val edgeLength = edgeVector.length
-        if (edgeLength <= MIN_EDGE_LENGTH_METERS) {
-            return@mapNotNull null
+        createEdgeAnchorNode(
+            sceneView = sceneView,
+            session = session,
+            start = start,
+            end = end,
+        ) { edgeLength ->
+            CubeNode(
+                engine = sceneView.engine,
+                size = dev.romainguy.kotlin.math.Float3(edgeLength, edgeThickness, edgeThickness),
+            )
         }
-        val edgeDirection = edgeVector / edgeLength
-        val midpoint = (start + end) / 2f
-        val edgeRotation = Quaternion.fromVectors(Vector3(1f, 0f, 0f), edgeDirection.normalized())
-        val edgeAnchor = session.createAnchor(
-            Pose(
-                floatArrayOf(midpoint.x, midpoint.y, midpoint.z),
-                floatArrayOf(edgeRotation.x, edgeRotation.y, edgeRotation.z, edgeRotation.w),
-            ),
-        )
-        val anchorNode = AnchorNode(sceneView.engine, edgeAnchor)
-        val edgeNode = CubeNode(
-            engine = sceneView.engine,
-            size = dev.romainguy.kotlin.math.Float3(edgeLength, edgeThickness, edgeThickness),
-        )
-        anchorNode.addChildNode(edgeNode)
-        sceneView.addChildNode(anchorNode)
-        anchorNode
     }
 }
 
@@ -128,8 +123,99 @@ private fun createWorldPointMarkerAnchorNode(
     return anchorNode
 }
 
-private const val POINT_MARKER_SIZE_METERS = 0.015f
+/**
+ * Draws zone 3D bounding box as thin blue wireframe edges.
+ *
+ * @param sceneView active SceneView.
+ * @param zone zone to visualize.
+ * @return created anchor nodes, one per rendered edge.
+ */
+private fun createZoneBoundingBoxNodes(
+    sceneView: ARSceneView,
+    zone: Zone,
+): List<AnchorNode> {
+    val session = sceneView.session ?: return emptyList()
+    val box = zone.boundingBox
+    val points = listOf(
+        Vector3(box.minX, box.minY, box.minZ),
+        Vector3(box.maxX, box.minY, box.minZ),
+        Vector3(box.maxX, box.maxY, box.minZ),
+        Vector3(box.minX, box.maxY, box.minZ),
+        Vector3(box.minX, box.minY, box.maxZ),
+        Vector3(box.maxX, box.minY, box.maxZ),
+        Vector3(box.maxX, box.maxY, box.maxZ),
+        Vector3(box.minX, box.maxY, box.maxZ),
+    )
+    val edgeIndices = listOf(
+        0 to 1, 1 to 2, 2 to 3, 3 to 0,
+        4 to 5, 5 to 6, 6 to 7, 7 to 4,
+        0 to 4, 1 to 5, 2 to 6, 3 to 7,
+    )
+    val blueMaterial = sceneView.materialLoader.createColorInstance(
+        Color(0f, 0f, 1f, 1f),
+    )
+    return edgeIndices.mapNotNull { (startIndex, endIndex) ->
+        val start = points[startIndex]
+        val end = points[endIndex]
+        createEdgeAnchorNode(
+            sceneView = sceneView,
+            session = session,
+            start = start,
+            end = end,
+        ) { edgeLength ->
+            CubeNode(
+                engine = sceneView.engine,
+                size = dev.romainguy.kotlin.math.Float3(
+                    edgeLength,
+                    BOUNDING_BOX_LINE_THICKNESS_METERS,
+                    BOUNDING_BOX_LINE_THICKNESS_METERS,
+                ),
+                materialInstance = blueMaterial,
+            )
+        }
+    }
+}
+
+/**
+ * Creates and attaches one oriented edge node between two world-space points.
+ *
+ * @param sceneView active SceneView.
+ * @param session ARCore session used to create an anchor.
+ * @param start edge start in world coordinates.
+ * @param end edge end in world coordinates.
+ * @param edgeNodeFactory builder that creates a node by edge length.
+ * @return created anchor node or null when edge is too short.
+ */
+private fun createEdgeAnchorNode(
+    sceneView: ARSceneView,
+    session: Session,
+    start: Vector3,
+    end: Vector3,
+    edgeNodeFactory: (edgeLength: Float) -> CubeNode,
+): AnchorNode? {
+    val edgeVector = end - start
+    val edgeLength = edgeVector.length
+    if (edgeLength <= MIN_EDGE_LENGTH_METERS) {
+        return null
+    }
+    val edgeDirection = edgeVector / edgeLength
+    val midpoint = (start + end) / 2f
+    val edgeRotation = Quaternion.fromVectors(Vector3(1f, 0f, 0f), edgeDirection.normalized())
+    val edgeAnchor = session.createAnchor(
+        Pose(
+            floatArrayOf(midpoint.x, midpoint.y, midpoint.z),
+            floatArrayOf(edgeRotation.x, edgeRotation.y, edgeRotation.z, edgeRotation.w),
+        ),
+    )
+    val anchorNode = AnchorNode(sceneView.engine, edgeAnchor)
+    anchorNode.addChildNode(edgeNodeFactory(edgeLength))
+    sceneView.addChildNode(anchorNode)
+    return anchorNode
+}
+
+private const val POINT_MARKER_SIZE_METERS = 0.005f
 private const val LINE_THICKNESS_FACTOR = 0.02f
 private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f
 private const val MIN_EDGE_LENGTH_METERS = 0.001f
+private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
