@@ -147,6 +147,7 @@ actual fun ArSceneHost(
 
     var debugText by remember { mutableStateOf("AR: waiting for renderer") }
     var translationText by remember { mutableStateOf("[UNKNOWN, 0x0 img, 0x0 view]") }
+    var mergeDebugText by remember { mutableStateOf("Merge debug: waiting for first merge") }
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
@@ -167,6 +168,9 @@ actual fun ArSceneHost(
                     viewWidth = info.viewWidth,
                     viewHeight = info.viewHeight,
                 )
+            },
+            onMergeInfoChanged = { mergeInfo ->
+                mergeDebugText = mergeInfo
             },
             onZonesDetected = { snapshot, zones ->
                 screenOverlays = screenOverlayStore.addDetectedZones(
@@ -232,7 +236,7 @@ actual fun ArSceneHost(
             modifier = Modifier.fillMaxSize(),
         )
         Text(
-            text = "$translationText\n$debugText",
+            text = "$translationText\n$mergeDebugText\n$debugText",
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(12.dp)

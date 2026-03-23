@@ -120,7 +120,7 @@ class ArDetectionPipeline(
                         val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
                             Surface.ROTATION_90,
                             Surface.ROTATION_270,
-                            -> {
+                                -> {
                                 // First observed landscape side is treated as baseline; opposite side means 180-degree rotation.
                                 val baseline = baselineLandscapeRotation
                                 if (baseline == null) {
@@ -185,7 +185,7 @@ class ArDetectionPipeline(
                                         zone = null,
                                         details =
                                             "Placement aborted: ${error.javaClass.simpleName}: " +
-                                                (error.message ?: "unknown error"),
+                                                    (error.message ?: "unknown error"),
                                     )
                                 }
                                 if (placementResult.zone != null) {
@@ -210,7 +210,7 @@ class ArDetectionPipeline(
                                     placedSceneNodes += renderedNodes
                                     reportStatus(
                                         "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
-                                            "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
+                                                "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
                                         true,
                                     )
                                 } else {
