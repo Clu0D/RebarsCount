@@ -125,6 +125,7 @@ class ZonesManager {
      */
     fun addZones(newZones: List<Zone>) {
         zones.addAll(newZones)
+            mergeDebugInfo += "${mergeResult.intersectingZonesCount}: ${mergeResult.maxOverlapPercent}"
     }
 
     /**
@@ -209,6 +210,7 @@ class ZonesManager {
         zones.clear()
         queuedZonesToRemove.clear()
         consumedZoneCount = 0
+        mergeDebugInfo = ""
     }
 
     /**
