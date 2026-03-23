@@ -35,9 +35,11 @@ class ArDetectionPipeline(
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
-    private val zonesManager = ZonesManager()
-    private val placedSceneNodes = mutableListOf<AnchorNode>()
-    private val renderedNodesByZone = IdentityHashMap<Zone, List<AnchorNode>>()
+    private val zonesManager = ZonesManager(
+        onZoneAddition = ::onZoneAdded,
+        onZoneDeletion = ::onZoneDeleted,
+    )
+    private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private var detectionJob: Job? = null
     private var lastDetectionAtMs = 0L
     private var lastCaptureFailureAtMs = 0L
@@ -65,13 +67,9 @@ class ArDetectionPipeline(
         isSceneActive.set(false)
         detectionJob?.cancel()
         sceneView = null
-        placedSceneNodes.forEach { node ->
-            runCatching { node.destroy() }
-        }
-        placedSceneNodes.clear()
+        zonesManager.clear()
         renderedNodesByZone.clear()
         baselineLandscapeRotation = null
-        zonesManager.clear()
     }
 
     /**
@@ -198,16 +196,6 @@ class ArDetectionPipeline(
                                         true,
                                     )
                                     removeQueuedZonesFromWorld()
-                                    val undrawnZones = zonesManager.consumeUndrawnZones()
-                                    val renderedNodes = undrawnZones.flatMap { drawnZone ->
-                                        val drawnNodes = drawZone(
-                                            sceneView = activeSceneView,
-                                            zone = drawnZone,
-                                        )
-                                        renderedNodesByZone[drawnZone] = drawnNodes
-                                        drawnNodes
-                                    }
-                                    placedSceneNodes += renderedNodes
                                     reportStatus(
                                         "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
                                                 "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
@@ -237,39 +225,52 @@ class ArDetectionPipeline(
 
         if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
             lastStatusAtMs = now
+            val sceneNodes = renderedNodesByZone.values.sumOf { it.size }
             reportStatus(
-                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${placedSceneNodes.size}",
+                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}",
                 false,
             )
         }
     }
 
     /**
-     * Removes all queued zones and destroys corresponding rendered nodes.
+     * Removes all queued zones from manager storage.
      */
     private fun removeQueuedZonesFromWorld() {
         val removedZones = zonesManager.consumeQueuedRemovedZones()
         if (removedZones.isEmpty()) {
             return
         }
-        var removedNodesCount = 0
-        var removedZonesWithoutSceneNodes = 0
-        removedZones.forEach { zone ->
-            val zoneNodes = renderedNodesByZone.remove(zone).orEmpty()
-            if (zoneNodes.isEmpty()) {
-                removedZonesWithoutSceneNodes++
-            }
-            zoneNodes.forEach { node ->
-                runCatching { node.destroy() }
-            }
-            placedSceneNodes.removeAll(zoneNodes.toSet())
-            removedNodesCount += zoneNodes.size
+        reportStatus("Removed ${removedZones.size} queued zone(s).", true)
+    }
+
+    /**
+     * Draws all scene objects owned by one newly added zone.
+     *
+     * @param zone added zone that should be rendered.
+     */
+    private fun onZoneAdded(zone: Zone) {
+        if (!isSceneActive.get()) {
+            return
         }
-        reportStatus(
-            "Removed ${removedZones.size} zone(s), $removedNodesCount scene node(s), " +
-                    "missingSceneMappings=$removedZonesWithoutSceneNodes.",
-            true,
+        val activeSceneView = sceneView ?: return
+        val drawnNodes = drawZone(
+            sceneView = activeSceneView,
+            zone = zone,
         )
+        renderedNodesByZone[zone] = drawnNodes.toMutableList()
+    }
+
+    /**
+     * Destroys all rendered scene nodes owned by one removed zone.
+     *
+     * @param zone removed zone whose scene objects should be cleaned up.
+     */
+    private fun onZoneDeleted(zone: Zone) {
+        val zoneNodes = renderedNodesByZone.remove(zone).orEmpty()
+        zoneNodes.forEach { node ->
+            runCatching { node.destroy() }
+        }
     }
 }
 

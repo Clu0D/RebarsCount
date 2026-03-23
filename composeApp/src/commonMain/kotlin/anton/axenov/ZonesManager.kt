@@ -109,23 +109,60 @@ data class ZoneBoundingBox3d(
 }
 
 /**
- * Stores all world-space zones and exposes only zones that were not drawn yet.
+ * Stores all world-space zones.
  *
- * Current behavior only appends zones. A later step can merge nearby zones.
+ * On add, close zones are merged by bounding-box overlap threshold.
+ *
+ * @param onZoneAddition callback invoked for each zone added to storage.
+ * @param onZoneDeletion callback invoked for each zone removed from storage.
  */
-class ZonesManager {
+class ZonesManager(
+    private val onZoneAddition: (Zone) -> Unit = {},
+    private val onZoneDeletion: (Zone) -> Unit = {},
+) {
     private val zones = mutableListOf<Zone>()
     private val queuedZonesToRemove = mutableListOf<Zone>()
-    private var consumedZoneCount = 0
+    private var mergeDebugInfo: String = ""
 
     /**
      * Adds new zones to manager storage.
      *
-     * @param newZones zones to append.
+     * Every new zone is compared with current zones by 3D bounding-box overlap.
+     * Intersecting old zones are removed and queued for scene removal, then one merged zone is stored.
+     *
+     * @param newZones zones to append and optionally merge.
      */
     fun addZones(newZones: List<Zone>) {
-        zones.addAll(newZones)
+        newZones.forEach { newZone ->
+            val mergeResult = mergeZoneWithIntersectingZones(newZone)
+            val mergedZone = mergeResult.zone
+            zones += mergedZone
+            onZoneAddition(mergedZone)
             mergeDebugInfo += "${mergeResult.intersectingZonesCount}: ${mergeResult.maxOverlapPercent}"
+        }
+    }
+
+    /**
+     * Returns merge diagnostics accumulated during latest [addZones] calls and clears the queue.
+     *
+     * @return merge diagnostics in insertion order.
+     */
+    fun consumeMergeDebugInfos(): String =
+        mergeDebugInfo.also { mergeDebugInfo = "" }
+
+    /**
+     * Finds all currently stored zones that intersect with the provided zone.
+     *
+     * Two zones are considered intersecting when their 3D bounding boxes overlap
+     * by more than BOX_INTERSECTION_THRESHOLD of the smaller box volume.
+     *
+     * @param zone zone to compare against stored ones.
+     * @return intersecting stored zones.
+     */
+    fun findIntersectingZones(zone: Zone): List<Zone> {
+        return findZoneOverlaps(zone)
+            .filter { (_, overlap) -> overlap >= BOX_INTERSECTION_THRESHOLD }
+            .map { (storedZone, _) -> storedZone }
     }
 
     /**
@@ -143,22 +180,6 @@ class ZonesManager {
     }
 
     /**
-     * Returns zones that were added since previous consumption call.
-     *
-     * Returned zones are marked as consumed and will not be returned again.
-     *
-     * @return list of newly added zones that are not consumed yet.
-     */
-    fun consumeUndrawnZones(): List<Zone> {
-        if (consumedZoneCount >= zones.size) {
-            return emptyList()
-        }
-        val undrawnZones = zones.subList(consumedZoneCount, zones.size).toList()
-        consumedZoneCount = zones.size
-        return undrawnZones
-    }
-
-    /**
      * Removes requested zones from manager storage.
      *
      * @param zonesToRemove zones that should be removed.
@@ -171,21 +192,17 @@ class ZonesManager {
 
         val removeSet = zonesToRemove.toSet()
         val removedZones = mutableListOf<Zone>()
-        var removedFromConsumedPrefix = 0
-        var originalIndex = 0
         val iterator = zones.listIterator()
         while (iterator.hasNext()) {
             val zone = iterator.next()
             if (zone in removeSet) {
                 iterator.remove()
                 removedZones += zone
-                if (originalIndex < consumedZoneCount) {
-                    removedFromConsumedPrefix++
-                }
             }
-            originalIndex++
         }
-        consumedZoneCount = (consumedZoneCount - removedFromConsumedPrefix).coerceAtLeast(0)
+        removedZones.forEach { zone ->
+            onZoneDeletion(zone)
+        }
         return removedZones
     }
 
@@ -204,13 +221,51 @@ class ZonesManager {
     }
 
     /**
-     * Clears all stored zones and resets consumption state.
+     * Clears all stored and queued zones.
      */
     fun clear() {
+        val removedZones = zones.toList()
         zones.clear()
         queuedZonesToRemove.clear()
-        consumedZoneCount = 0
         mergeDebugInfo = ""
+        removedZones.forEach { zone ->
+            onZoneDeletion(zone)
+        }
+    }
+
+    /**
+     * Merges one newly added zone with all intersecting already stored zones.
+     *
+     * Intersecting zones are removed from storage and queued for scene removal.
+     *
+     * @param newZone newly detected zone.
+     * @return merged zone containing sampled points from all intersecting zones.
+     */
+    private fun mergeZoneWithIntersectingZones(newZone: Zone): ZoneMergeResult {
+        val overlaps = findZoneOverlaps(newZone)
+        val intersectingOverlaps = overlaps
+            .filter { (_, overlap) -> overlap >= BOX_INTERSECTION_THRESHOLD }
+        val intersectingZones = intersectingOverlaps.map { (storedZone, _) -> storedZone }
+        val maxOverlapPercent = (intersectingOverlaps.maxOfOrNull { (_, overlap) -> overlap } ?: 0f) * 100f
+
+        if (intersectingZones.isEmpty()) {
+            return ZoneMergeResult(
+                zone = newZone,
+                intersectingZonesCount = 0,
+                maxOverlapPercent = maxOverlapPercent,
+            )
+        }
+        val removedZones = removeZones(intersectingZones)
+        if (removedZones.isNotEmpty()) {
+            queuedZonesToRemove += removedZones
+        }
+        return ZoneMergeResult(
+            zone = newZone.copy(
+                sampledPoints = newZone.sampledPoints + removedZones.flatMap { it.sampledPoints },
+            ),
+            intersectingZonesCount = removedZones.size,
+            maxOverlapPercent = maxOverlapPercent,
+        )
     }
 
     /**
@@ -245,5 +300,6 @@ private data class ZoneMergeResult(
 )
 
 private const val BOUNDING_BOX_PADDING_RATIO = 0.1f
+private const val BOX_INTERSECTION_THRESHOLD = 0.3f
 private const val MIN_PADDING_METERS = 0.05f
 private const val MIN_BOX_VOLUME_EPSILON = 1e-8f
