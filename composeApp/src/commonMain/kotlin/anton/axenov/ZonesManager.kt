@@ -1,6 +1,8 @@
 package anton.axenov
 
 import korlibs.math.geom.Vector3F as Vector3
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * One detected zone represented in world space.
@@ -72,6 +74,37 @@ data class ZoneBoundingBox3d(
         return (maxX - minX).coerceAtLeast(0f) *
                 (maxY - minY).coerceAtLeast(0f) *
                 (maxZ - minZ).coerceAtLeast(0f)
+    }
+
+    /**
+     * Computes intersection volume with another box.
+     *
+     * @param other second box.
+     * @return intersection volume or zero when there is no overlap.
+     */
+    fun intersectionVolume(other: ZoneBoundingBox3d): Float {
+        val overlapX = min(maxX, other.maxX) - max(minX, other.minX)
+        val overlapY = min(maxY, other.maxY) - max(minY, other.minY)
+        val overlapZ = min(maxZ, other.maxZ) - max(minZ, other.minZ)
+        if (overlapX <= 0f || overlapY <= 0f || overlapZ <= 0f) {
+            return 0f
+        }
+        return overlapX * overlapY * overlapZ
+    }
+
+    /**
+     * Computes overlap ratio relative to the smaller box volume.
+     *
+     * @param other second box.
+     * @return value in `[0, 1]` where `0` means no overlap.
+     */
+    fun overlapRatioBySmallerBox(other: ZoneBoundingBox3d): Float {
+        val intersection = intersectionVolume(other)
+        if (intersection <= 0f) {
+            return 0f
+        }
+        val denominator = min(volume(), other.volume()).coerceAtLeast(MIN_BOX_VOLUME_EPSILON)
+        return intersection / denominator
     }
 }
 
@@ -211,3 +244,4 @@ private data class ZoneMergeResult(
 
 private const val BOUNDING_BOX_PADDING_RATIO = 0.1f
 private const val MIN_PADDING_METERS = 0.05f
+private const val MIN_BOX_VOLUME_EPSILON = 1e-8f
