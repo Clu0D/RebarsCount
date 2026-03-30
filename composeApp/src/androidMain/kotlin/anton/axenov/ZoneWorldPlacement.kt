@@ -87,7 +87,7 @@ fun placeZoneInWorld(
     val zone = Zone(
         sampledPoints = worldPoints,
         planePose = fittedPlanePose,
-        projectionInput = projectionInput,
+        projectionInputs = listOf(projectionInput),
     )
     return ZonePlacementResult(
         zone = zone,

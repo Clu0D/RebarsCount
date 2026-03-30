@@ -7,17 +7,30 @@ import kotlin.math.min
 /**
  * One detected zone represented in world space.
  *
- * @param polygonPoints projected zone polygon points in world coordinates.
  * @param sampledPoints sampled world points used to estimate infinite plane.
  * @param planePose mathematical parameters of fitted infinite plane.
- * @param projectionInput original projection payload used to build polygon points.
+ * @param projectionInputs all original projection payloads used to build source polygons.
  */
 data class Zone(
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
-    val projectionInput: ZoneProjectionInput? = null,
+    val projectionInputs: List<ZoneProjectionInput> = emptyList(),
 ) {
-    val polygonPoints: List<Vector3> by lazy { projectionInput?.projectToPlane(planePose) ?: listOf() }
+    val polygonPoints: List<Vector3> by lazy {
+        if (projectionInputs.isEmpty())
+            return@lazy emptyList()
+
+        val projectedPoints = projectionInputs
+            .flatMap { input -> input.projectToPlane(planePose).orEmpty() }
+        if (projectedPoints.isEmpty())
+            return@lazy emptyList()
+
+        buildConvexHullOnPlane(
+            worldPoints = projectedPoints,
+            planePose = planePose,
+        )
+    }
+
 
     val boundingBox: ZoneBoundingBox3d by lazy {
         val basePoints = when {
@@ -374,14 +387,21 @@ class ZonesManager(
         if (removedZones.isNotEmpty()) {
             queuedZonesToRemove += removedZones
         }
-        val mergedSampledPoints = newZone.sampledPoints + removedZones.flatMap { it.sampledPoints }
+        val zonesToMerge = listOf(newZone) + removedZones
+        val mergedProjectionInputs = zonesToMerge.flatMap { zone -> zone.projectionInputs }
+        val mergedSampledPoints = zonesToMerge.flatMap { zone -> zone.sampledPoints }
+        val cameraPosition = mergedProjectionInputs.firstOrNull()?.cameraPosition() ?: newZone.planePose.center
         val mergedPlanePose = fitPlanePoseFromPoints(
             worldPoints = mergedSampledPoints,
-            cameraPosition = newZone.projectionInput?.cameraPosition() ?: newZone.planePose.center,
+            cameraPosition = cameraPosition,
             minPointCount = MERGE_PLANE_MIN_POINT_COUNT,
         ).pose ?: newZone.planePose
         return ZoneMergeResult(
-            zone = Zone(mergedSampledPoints, mergedPlanePose, newZone.projectionInput),
+            zone = Zone(
+                sampledPoints = mergedSampledPoints,
+                planePose = mergedPlanePose,
+                projectionInputs = mergedProjectionInputs,
+            ),
             intersectingZonesCount = removedZones.size,
             maxOverlapPercent = maxOverlapPercent,
         )
