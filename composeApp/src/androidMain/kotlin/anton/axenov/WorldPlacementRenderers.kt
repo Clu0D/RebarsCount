@@ -1,5 +1,9 @@
 package anton.axenov
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint
 import com.google.ar.core.Anchor
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
@@ -7,9 +11,11 @@ import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.math.Color
 import io.github.sceneview.node.CubeNode
+import io.github.sceneview.node.ImageNode
 import kotlin.math.max
 import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
+import androidx.core.graphics.createBitmap
 
 /**
  * Draws one managed zone polygon and all of its sampled points.
@@ -35,6 +41,53 @@ fun drawZone(
         zone = zone,
     )
     return polygonNodes + pointNodes + zoneBoundingBoxNodes
+}
+
+/**
+ * Creates a text label node in world space at provided world point and adds it to the scene.
+ *
+ * @param sceneView active SceneView.
+ * @param worldPoint target world-space point where label anchor should be created.
+ * @param text label text content.
+ * @param lookAtWorldPoint optional world-space point to orient label toward.
+ * @param labelWidthMeters width of label.
+ * @param labelHeightMeters height of label.
+ * @return created label anchor node or null when session is unavailable.
+ */
+fun createWorldTextLabelNode(
+    sceneView: ARSceneView,
+    worldPoint: Vector3,
+    text: String,
+    lookAtWorldPoint: Vector3? = null,
+    labelWidthMeters: Float = 0.1f,
+    labelHeightMeters: Float = 0.05f,
+): AnchorNode? {
+    val session = sceneView.session ?: return null
+    val anchor = session.createAnchor(Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z))
+    val anchorNode = AnchorNode(sceneView.engine, anchor)
+    val textBitmap = createTextLabelBitmap(text)
+    val labelNode = ImageNode(
+        materialLoader = sceneView.materialLoader,
+        bitmap = textBitmap,
+        size = dev.romainguy.kotlin.math.Float3(
+            labelWidthMeters,
+            labelHeightMeters,
+            1f,
+        ),
+    )
+    labelNode.setCulling(false)
+    anchorNode.addChildNode(labelNode)
+    lookAtWorldPoint?.let { lookAtTarget ->
+        labelNode.lookAt(
+            dev.romainguy.kotlin.math.Float3(
+                lookAtTarget.x,
+                lookAtTarget.y,
+                lookAtTarget.z,
+            ),
+        )
+    }
+    sceneView.addChildNode(anchorNode)
+    return anchorNode
 }
 
 /**
@@ -121,6 +174,45 @@ private fun createWorldPointMarkerAnchorNode(
     anchorNode.addChildNode(pointCube)
     sceneView.addChildNode(anchorNode)
     return anchorNode
+}
+
+/**
+ * Builds simple bitmap texture with text and rounded rectangle background for AR label rendering.
+ *
+ * @param text text content to draw.
+ * @return bitmap that can be used by SceneView `ImageNode`.
+ */
+private fun createTextLabelBitmap(text: String): Bitmap {
+    val safeText = text.ifBlank { DEFAULT_DEBUG_LABEL_TEXT }
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.WHITE
+        textSize = LABEL_TEXT_SIZE_PX
+        textAlign = Paint.Align.LEFT
+    }
+    val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.argb(220, 30, 30, 30)
+        style = Paint.Style.FILL
+    }
+    val textWidth = textPaint.measureText(safeText).toInt()
+    val width = (textWidth + LABEL_HORIZONTAL_PADDING_PX * 2).coerceAtLeast(LABEL_MIN_WIDTH_PX)
+    val height = (LABEL_TEXT_SIZE_PX.toInt() + LABEL_VERTICAL_PADDING_PX * 2)
+        .coerceAtLeast(LABEL_MIN_HEIGHT_PX)
+    val bitmap = createBitmap(width.toInt(), height.toInt())
+    val canvas = Canvas(bitmap)
+    canvas.drawRoundRect(
+        0f, 0f, width, height,
+        LABEL_CORNER_RADIUS_PX,
+        LABEL_CORNER_RADIUS_PX,
+        backgroundPaint,
+    )
+    val baselineY = LABEL_VERTICAL_PADDING_PX + LABEL_TEXT_SIZE_PX
+    canvas.drawText(
+        safeText,
+        LABEL_HORIZONTAL_PADDING_PX,
+        baselineY,
+        textPaint,
+    )
+    return bitmap
 }
 
 /**
@@ -219,3 +311,10 @@ private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f
 private const val MIN_EDGE_LENGTH_METERS = 0.001f
 private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
+private const val LABEL_TEXT_SIZE_PX = 24f
+private const val LABEL_HORIZONTAL_PADDING_PX = 20f
+private const val LABEL_VERTICAL_PADDING_PX = 20f
+private const val LABEL_CORNER_RADIUS_PX = 20f
+private const val LABEL_MIN_WIDTH_PX = 300f
+private const val LABEL_MIN_HEIGHT_PX = 120f
+private const val DEFAULT_DEBUG_LABEL_TEXT = "Error: no text"
