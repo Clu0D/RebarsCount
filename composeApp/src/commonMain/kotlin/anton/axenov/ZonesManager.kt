@@ -16,6 +16,12 @@ data class Zone(
     val planePose: PlanePose,
     val projectionInputs: List<ZoneProjectionInput> = emptyList(),
 ) {
+    /**
+     * Latest computed metric text for this zone.
+     */
+    var metricsText: String = ""
+        private set
+
     val polygonPoints: List<Vector3> by lazy {
         if (projectionInputs.isEmpty())
             return@lazy emptyList()
@@ -60,6 +66,28 @@ data class Zone(
             maxY = maxY + padding,
             maxZ = maxZ + padding,
         )
+    }
+
+    val center: Vector3 by lazy {
+        Vector3(
+            (boundingBox.maxX + boundingBox.minX) / 2f,
+            (boundingBox.maxY + boundingBox.minY) / 2f,
+            (boundingBox.maxZ + boundingBox.minZ) / 2f,
+        )
+    }
+
+    /**
+     * Recalculates zone metrics text for provided camera position.
+     *
+     * @param cameraPosition current camera position in world coordinates.
+     * @return recalculated metrics text.
+     */
+    fun recalculateMetrics(cameraPosition: Vector3): String {
+        metricsText = buildZoneMetricsText(
+            zone = this,
+            cameraPosition = cameraPosition,
+        )
+        return metricsText
     }
 }
 
@@ -360,6 +388,13 @@ class ZonesManager(
             onZoneDeletion(zone)
         }
     }
+
+    /**
+     * Returns immutable snapshot of all currently stored zones.
+     *
+     * @return stored zones in insertion order.
+     */
+    fun getZones(): List<Zone> = zones.toList()
 
     /**
      * Merges one newly added zone with all intersecting already stored zones.

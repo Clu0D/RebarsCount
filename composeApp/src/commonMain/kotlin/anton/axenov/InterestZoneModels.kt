@@ -23,6 +23,13 @@ data class ScreenBoundingBox(
     val right: Int,
     val bottom: Int,
 ) {
+    constructor(polygon: List<ImagePoint>) : this(
+        left = polygon.minOfOrNull { it.x } ?: 0,
+        top = polygon.minOfOrNull { it.y } ?: 0,
+        right = polygon.maxOfOrNull { it.x } ?: 0,
+        bottom = polygon.maxOfOrNull { it.y } ?: 0,
+    )
+
     /**
      * Returns horizontal center in pixels.
      *

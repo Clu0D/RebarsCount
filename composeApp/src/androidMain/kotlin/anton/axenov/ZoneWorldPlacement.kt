@@ -375,7 +375,7 @@ private fun sampleViewPointsInZone(
  * @param sceneView active SceneView.
  * @return camera position or null when frame is unavailable.
  */
-private fun currentCameraPosition(sceneView: ARSceneView): Vector3? {
+fun currentCameraPosition(sceneView: ARSceneView): Vector3? {
     val pose = sceneView.frame?.camera?.pose ?: return null
     return Vector3(pose.tx(), pose.ty(), pose.tz())
 }

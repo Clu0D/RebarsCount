@@ -76,3 +76,34 @@ fun calculateZoneScreenCoveragePercent(
     }
     return (zoneArea.toDouble() / screenArea.toDouble() * 100.0).toFloat()
 }
+
+/**
+ * Builds one short multiline text for zone metric label.
+ *
+ * @param zone zone that should be described.
+ * @param cameraPosition current camera position in world coordinates.
+ * @return human-readable metric label.
+ */
+fun buildZoneMetricsText(
+    zone: Zone,
+    cameraPosition: Vector3,
+): String {
+    val captureAngle = estimateZoneCaptureAngle(
+        planePose = zone.planePose,
+        cameraPosition = cameraPosition,
+    )
+    val coverages = zone.projectionInputs.map { projectionInput ->
+        calculateZoneScreenCoveragePercent(
+            screenBoundingBox = ScreenBoundingBox(projectionInput.originalScreenPolygon),
+            screenWidth = projectionInput.imageWidth,
+            screenHeight = projectionInput.imageHeight,
+        )
+    }
+    val averageCoverage = if (coverages.isEmpty()) 0f else coverages.average().toFloat()
+    val maxCoverage = coverages.maxOrNull() ?: 0f
+
+    return "ang=${captureAngle.angleDegrees.toPrecision(1)}deg, " +
+            "dot=${captureAngle.normalToCameraDot.toPrecision(2)}\n" +
+            "cov(avg/max)=${averageCoverage.toPrecision(1)}%/" +
+            "${maxCoverage.toPrecision(1)}% [n=${zone.projectionInputs.size}]"
+}
