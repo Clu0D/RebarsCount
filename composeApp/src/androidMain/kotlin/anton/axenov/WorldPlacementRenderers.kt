@@ -16,13 +16,14 @@ import kotlin.math.max
 import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
 import androidx.core.graphics.createBitmap
+import dev.romainguy.kotlin.math.Float2
 
 /**
  * Draws one managed zone polygon and all of its sampled points.
  *
  * @param sceneView active SceneView.
  * @param zone zone data to draw.
- * @return created anchor nodes for polygon edges and sampled points.
+ * @return created anchor nodes for polygon edges, sampled points and center label.
  */
 fun drawZone(
     sceneView: ARSceneView,
@@ -40,7 +41,13 @@ fun drawZone(
         sceneView = sceneView,
         zone = zone,
     )
-    return polygonNodes + pointNodes + zoneBoundingBoxNodes
+    val labelNode = createWorldTextLabelNode(
+        sceneView = sceneView,
+        worldPoint = zone.center,
+        text = zone.labelText,
+        normalVector = zone.planePose.normal,
+    )
+    return polygonNodes + pointNodes + zoneBoundingBoxNodes + listOfNotNull(labelNode)
 }
 
 /**
@@ -49,8 +56,7 @@ fun drawZone(
  * @param sceneView active SceneView.
  * @param worldPoint target world-space point where label anchor should be created.
  * @param text label text content.
- * @param lookAtWorldPoint optional world-space point to orient label toward.
- * @param labelWidthMeters width of label.
+ * @param normalVector optional world-space normal used to orient label plane.
  * @param labelHeightMeters height of label.
  * @return created label anchor node or null when session is unavailable.
  */
@@ -58,36 +64,50 @@ fun createWorldTextLabelNode(
     sceneView: ARSceneView,
     worldPoint: Vector3,
     text: String,
-    lookAtWorldPoint: Vector3? = null,
-    labelWidthMeters: Float = 0.1f,
-    labelHeightMeters: Float = 0.05f,
+    normalVector: Vector3? = null,
+    scale: Float = 0.5f,
 ): AnchorNode? {
     val session = sceneView.session ?: return null
-    val anchor = session.createAnchor(Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z))
-    val anchorNode = AnchorNode(sceneView.engine, anchor)
     val textBitmap = createTextLabelBitmap(text)
+
+    val anchor = session.createAnchor(
+        createTextLabelAnchorPose(
+            worldPoint = worldPoint,
+            normalVector = normalVector,
+        ),
+    )
+    val anchorNode = AnchorNode(sceneView.engine, anchor)
     val labelNode = ImageNode(
         materialLoader = sceneView.materialLoader,
         bitmap = textBitmap,
-        size = dev.romainguy.kotlin.math.Float3(
-            labelWidthMeters,
-            labelHeightMeters,
-            1f,
-        ),
+        uvScale = Float2(scale, scale)
     )
     labelNode.setCulling(false)
     anchorNode.addChildNode(labelNode)
-    lookAtWorldPoint?.let { lookAtTarget ->
-        labelNode.lookAt(
-            dev.romainguy.kotlin.math.Float3(
-                lookAtTarget.x,
-                lookAtTarget.y,
-                lookAtTarget.z,
-            ),
-        )
-    }
     sceneView.addChildNode(anchorNode)
     return anchorNode
+}
+
+/**
+ * Creates label anchor pose with optional orientation from the supplied plane normal.
+ *
+ * Local +Z axis is aligned to [normalVector] so image plane is attached to zone plane.
+ *
+ * @param worldPoint anchor world position.
+ * @param normalVector optional zone plane normal.
+ * @return ARCore pose for label anchor.
+ */
+private fun createTextLabelAnchorPose(
+    worldPoint: Vector3,
+    normalVector: Vector3?,
+): Pose {
+    val normalizedNormal =
+        normalVector?.normalized() ?: return Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z)
+    val labelRotation = Quaternion.fromVectors(Vector3(0f, 0f, 1f), normalizedNormal)
+    return Pose(
+        floatArrayOf(worldPoint.x, worldPoint.y, worldPoint.z),
+        floatArrayOf(labelRotation.x, labelRotation.y, labelRotation.z, labelRotation.w),
+    )
 }
 
 /**

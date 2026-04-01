@@ -37,6 +37,7 @@ class ArDetectionPipeline(
     private val zonesManager = ZonesManager(
         onZoneAddition = ::onZoneAdded,
         onZoneDeletion = ::onZoneDeleted,
+        onZoneLabelUpdate = ::onZoneLabelUpdated,
     )
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private var detectionJob: Job? = null
@@ -244,6 +245,18 @@ class ArDetectionPipeline(
     }
 
     /**
+     * Updates text label for one already stored zone.
+     *
+     * @param zone target stored zone.
+     * @param text new text that should be rendered at [Zone.center].
+     * @return true when zone exists in manager and label was updated.
+     */
+    fun updateZoneLabelText(
+        zone: Zone,
+        text: String,
+    ): Boolean = zonesManager.updateZoneLabelText(zone, text)
+
+    /**
      * Draws all scene objects owned by one newly added zone.
      *
      * @param zone added zone that should be rendered.
@@ -258,6 +271,26 @@ class ArDetectionPipeline(
             zone = zone,
         )
         renderedNodesByZone[zone] = drawnNodes.toMutableList()
+    }
+
+    /**
+     * Redraws scene objects for one zone after its label text change.
+     *
+     * @param zone updated zone that should be re-rendered.
+     */
+    private fun onZoneLabelUpdated(zone: Zone) {
+        if (!isSceneActive.get()) {
+            return
+        }
+        val activeSceneView = sceneView ?: return
+        renderedNodesByZone.remove(zone).orEmpty().forEach { node ->
+            runCatching { node.destroy() }
+        }
+        val redrawnNodes = drawZone(
+            sceneView = activeSceneView,
+            zone = zone,
+        )
+        renderedNodesByZone[zone] = redrawnNodes.toMutableList()
     }
 
     /**

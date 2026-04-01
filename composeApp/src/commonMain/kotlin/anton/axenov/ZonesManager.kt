@@ -17,6 +17,12 @@ data class Zone(
     val projectionInputs: List<ZoneProjectionInput> = emptyList(),
 ) {
     /**
+     * Current text shown in the zone label in AR scene.
+     */
+    var labelText: String = "Error: no text"
+        private set
+
+    /**
      * Latest computed metric text for this zone.
      */
     var metricsText: String = ""
@@ -88,6 +94,17 @@ data class Zone(
             cameraPosition = cameraPosition,
         )
         return metricsText
+    }
+
+    /**
+     * Updates text shown for this zone in AR scene.
+     *
+     * @param text new label text.
+     * @return updated label text.
+     */
+    fun updateLabelText(text: String): String {
+        labelText = text
+        return labelText
     }
 }
 
@@ -271,10 +288,12 @@ data class ZoneBoundingBox3d(
  *
  * @param onZoneAddition callback invoked for each zone added to storage.
  * @param onZoneDeletion callback invoked for each zone removed from storage.
+ * @param onZoneLabelUpdate callback invoked when stored zone label text changes.
  */
 class ZonesManager(
     private val onZoneAddition: (Zone) -> Unit = {},
     private val onZoneDeletion: (Zone) -> Unit = {},
+    private val onZoneLabelUpdate: (Zone) -> Unit = {},
 ) {
     private val zones = mutableListOf<Zone>()
     private val queuedZonesToRemove = mutableListOf<Zone>()
@@ -360,6 +379,20 @@ class ZonesManager(
             onZoneDeletion(zone)
         }
         return removedZones
+    }
+
+    /**
+     * Updates label text for one stored zone.
+     *
+     * @param zone target stored zone.
+     * @param text new label text.
+     * @return true when zone exists and was updated.
+     */
+    fun updateZoneLabelText(zone: Zone, text: String): Boolean {
+        val existingZone = zones.firstOrNull { storedZone -> storedZone === zone } ?: return false
+        existingZone.updateLabelText(text)
+        onZoneLabelUpdate(existingZone)
+        return true
     }
 
     /**
