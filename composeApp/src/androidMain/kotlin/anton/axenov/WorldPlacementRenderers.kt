@@ -13,10 +13,11 @@ import io.github.sceneview.math.Color
 import io.github.sceneview.node.CubeNode
 import io.github.sceneview.node.ImageNode
 import kotlin.math.max
+import korlibs.math.geom.Matrix3
 import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
 import androidx.core.graphics.createBitmap
-import dev.romainguy.kotlin.math.Float2
+import dev.romainguy.kotlin.math.Float3
 
 /**
  * Draws one managed zone polygon and all of its sampled points.
@@ -46,6 +47,7 @@ fun drawZone(
         worldPoint = zone.center,
         text = zone.labelText,
         normalVector = zone.planePose.normal,
+        scale = 0.2f
     )
     return polygonNodes + pointNodes + zoneBoundingBoxNodes + listOfNotNull(labelNode)
 }
@@ -57,7 +59,7 @@ fun drawZone(
  * @param worldPoint target world-space point where label anchor should be created.
  * @param text label text content.
  * @param normalVector optional world-space normal used to orient label plane.
- * @param labelHeightMeters height of label.
+ * @param scale text scale.
  * @return created label anchor node or null when session is unavailable.
  */
 fun createWorldTextLabelNode(
@@ -80,8 +82,10 @@ fun createWorldTextLabelNode(
     val labelNode = ImageNode(
         materialLoader = sceneView.materialLoader,
         bitmap = textBitmap,
-        uvScale = Float2(scale, scale)
-    )
+    ).apply {
+        setCulling(false)
+        this.scale = Float3(scale, scale, scale)
+    }
     labelNode.setCulling(false)
     anchorNode.addChildNode(labelNode)
     sceneView.addChildNode(anchorNode)
@@ -91,7 +95,8 @@ fun createWorldTextLabelNode(
 /**
  * Creates label anchor pose with optional orientation from the supplied plane normal.
  *
- * Local +Z axis is aligned to [normalVector] so image plane is attached to zone plane.
+ * Local +Z axis is aligned to [normalVector], and local +X is constrained to remain parallel
+ * to the ground plane (world horizontal axis), removing label roll/tilt while staying on plane.
  *
  * @param worldPoint anchor world position.
  * @param normalVector optional zone plane normal.
@@ -103,7 +108,17 @@ private fun createTextLabelAnchorPose(
 ): Pose {
     val normalizedNormal =
         normalVector?.normalized() ?: return Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z)
-    val labelRotation = Quaternion.fromVectors(Vector3(0f, 0f, 1f), normalizedNormal)
+    val worldUp = Vector3(0f, 1f, 0f)
+    val candidateAxisX = worldUp.cross(normalizedNormal)
+    val axisX = candidateAxisX.normalized()
+    val axisY = normalizedNormal.cross(axisX).normalized()
+    val labelRotation = Quaternion.fromRotationMatrix(
+        Matrix3.fromColumns(
+            axisX,
+            axisY,
+            normalizedNormal,
+        ),
+    )
     return Pose(
         floatArrayOf(worldPoint.x, worldPoint.y, worldPoint.z),
         floatArrayOf(labelRotation.x, labelRotation.y, labelRotation.z, labelRotation.w),
@@ -332,9 +347,9 @@ private const val LINE_MAX_THICKNESS_METERS = 0.03f
 private const val MIN_EDGE_LENGTH_METERS = 0.001f
 private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
 private const val LABEL_TEXT_SIZE_PX = 24f
-private const val LABEL_HORIZONTAL_PADDING_PX = 20f
-private const val LABEL_VERTICAL_PADDING_PX = 20f
-private const val LABEL_CORNER_RADIUS_PX = 20f
-private const val LABEL_MIN_WIDTH_PX = 300f
-private const val LABEL_MIN_HEIGHT_PX = 120f
+private const val LABEL_HORIZONTAL_PADDING_PX = 8f
+private const val LABEL_VERTICAL_PADDING_PX = 8f
+private const val LABEL_CORNER_RADIUS_PX = 8f
+private const val LABEL_MIN_WIDTH_PX = 50f
+private const val LABEL_MIN_HEIGHT_PX = 30f
 private const val DEFAULT_DEBUG_LABEL_TEXT = "Error: no text"
