@@ -22,12 +22,6 @@ data class Zone(
     var labelText: String = "Error: no text"
         private set
 
-    /**
-     * Latest computed metric text for this zone.
-     */
-    var metricsText: String = ""
-        private set
-
     val polygonPoints: List<Vector3> by lazy {
         if (projectionInputs.isEmpty())
             return@lazy emptyList()
@@ -89,11 +83,10 @@ data class Zone(
      * @return recalculated metrics text.
      */
     fun recalculateMetrics(cameraPosition: Vector3): String {
-        metricsText = buildZoneMetricsText(
+        return buildZoneMetricsText(
             zone = this,
             cameraPosition = cameraPosition,
         )
-        return metricsText
     }
 
     /**
@@ -382,17 +375,28 @@ class ZonesManager(
     }
 
     /**
-     * Updates label text for one stored zone.
+     * Recalculates and applies zone label metrics for all stored zones.
      *
-     * @param zone target stored zone.
-     * @param text new label text.
-     * @return true when zone exists and was updated.
+     * @param cameraPosition current camera position in world coordinates.
+     * @return number of zones whose visible label text changed.
      */
-    fun updateZoneLabelText(zone: Zone, text: String): Boolean {
-        val existingZone = zones.firstOrNull { storedZone -> storedZone === zone } ?: return false
-        existingZone.updateLabelText(text)
-        onZoneLabelUpdate(existingZone)
-        return true
+    fun refreshZoneMetricsLabels(
+        cameraPosition: Vector3
+    ): Int {
+        var changedZonesCount = 0
+        zones.forEach { zone ->
+            zone.recalculateMetrics(cameraPosition)
+            val nextLabelText = buildZoneMetricsText(
+                zone = zone,
+                cameraPosition = cameraPosition,
+            )
+            if (zone.labelText != nextLabelText) {
+                zone.updateLabelText(nextLabelText)
+                onZoneLabelUpdate(zone)
+                changedZonesCount++
+            }
+        }
+        return changedZonesCount
     }
 
     /**

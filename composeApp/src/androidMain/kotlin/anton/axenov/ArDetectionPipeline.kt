@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import korlibs.math.geom.Vector3F as Vector3
 
 /**
  * Coordinates end-to-end detection and placement for AR session updates.
@@ -42,6 +43,7 @@ class ArDetectionPipeline(
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private var detectionJob: Job? = null
     private var lastDetectionAtMs = 0L
+    private var lastMetricsLabelRefreshAtMs = 0L
     private var lastCaptureFailureAtMs = 0L
     private var lastDepthUnavailableLogAtMs = 0L
     private var asyncPlacementNoticeShown = false
@@ -96,16 +98,27 @@ class ArDetectionPipeline(
         }
 
         val now = SystemClock.elapsedRealtime()
-        if (
-            trackingState == TrackingState.TRACKING &&
+        if (trackingState == TrackingState.TRACKING &&
+            now - lastMetricsLabelRefreshAtMs >= METRICS_LABEL_REFRESH_INTERVAL_MS
+        ) {
+            lastMetricsLabelRefreshAtMs = now
+            val cameraPose = frame.camera.pose
+            zonesManager.refreshZoneMetricsLabels(
+                cameraPosition = Vector3(
+                    x = cameraPose.tx(),
+                    y = cameraPose.ty(),
+                    z = cameraPose.tz(),
+                )
+            )
+        }
+        if (trackingState == TrackingState.TRACKING &&
             now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
             detectionJob?.isActive != true
         ) {
             val captureResult = captureDetectionFrameSnapshot(frame)
             val snapshot = captureResult.snapshot
             if (snapshot != null) {
-                if (
-                    snapshot.depthSnapshot == null &&
+                if (snapshot.depthSnapshot == null &&
                     now - lastDepthUnavailableLogAtMs >= CAPTURE_FAILURE_REPORT_INTERVAL_MS
                 ) {
                     lastDepthUnavailableLogAtMs = now
@@ -245,18 +258,6 @@ class ArDetectionPipeline(
     }
 
     /**
-     * Updates text label for one already stored zone.
-     *
-     * @param zone target stored zone.
-     * @param text new text that should be rendered at [Zone.center].
-     * @return true when zone exists in manager and label was updated.
-     */
-    fun updateZoneLabelText(
-        zone: Zone,
-        text: String,
-    ): Boolean = zonesManager.updateZoneLabelText(zone, text)
-
-    /**
      * Draws all scene objects owned by one newly added zone.
      *
      * @param zone added zone that should be rendered.
@@ -326,3 +327,4 @@ data class TranslationOverlayInfo(
 private const val DETECTION_INTERVAL_MS = 5000L
 private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L
 private const val FRAME_STATUS_INTERVAL_MS = 1000L
+private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 200L
