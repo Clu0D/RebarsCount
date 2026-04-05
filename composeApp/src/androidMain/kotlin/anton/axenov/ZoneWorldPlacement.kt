@@ -84,8 +84,9 @@ fun placeZoneInWorld(
         zone = detectedZone,
         translationVariant = translationVariant,
     )
+    val filteredWorldPoints = planeFit.inlierPoints.ifEmpty { worldPoints }
     val zone = Zone(
-        sampledPoints = worldPoints,
+        sampledPoints = filteredWorldPoints,
         planePose = fittedPlanePose,
         projectionInputs = listOf(projectionInput),
     )
@@ -96,7 +97,7 @@ fun placeZoneInWorld(
                 "Plane fit: ${planeFit.details}. " +
                 "Note: hit tests use current frame, not captured frame ${snapshot.frameTimestamp}." +
                 "projectedCorners=${zone.polygonPoints.size}, " +
-                "sampledPoints=${worldPoints.size}",
+                "sampledPoints=${zone.sampledPoints.size}",
     )
 }
 

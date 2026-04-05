@@ -28,7 +28,19 @@ data class PlanePose(
 data class PlaneFitResult(
     val pose: PlanePose?,
     val depthMeters: Float?,
+    val inlierPoints: List<Vector3> = emptyList(),
     val details: String,
+)
+
+/**
+ * Result of linear plane regression `z = a*x + b*y + c`.
+ *
+ * @param coefficients regression coefficients where `x = a`, `y = b`, `z = c`.
+ * @param inlierPoints points kept after robust residual filtering.
+ */
+data class PlaneRegressionResult(
+    val coefficients: Vector3,
+    val inlierPoints: List<Vector3>,
 )
 
 /**
@@ -166,12 +178,14 @@ fun fitPlanePoseFromPoints(
         details = "Need at least $minPointCount points, but got ${worldPoints.size}",
     )
 } else try {
-    val (a, b, c) = fitPlaneRegression(worldPoints)
+    val regressionResult = fitPlaneRegression(worldPoints)
+    val (a, b, c) = regressionResult.coefficients
+    val fittedPoints = regressionResult.inlierPoints
 
     // plane normal for z = ax + by + c
     var normal = Vector3(-a, -b, 1f).normalized()
 
-    val center = worldPoints.reduce { acc, v -> acc + v } / worldPoints.size.toFloat()
+    val center = fittedPoints.reduce { acc, v -> acc + v } / fittedPoints.size.toFloat()
 
     // flip normal toward camera
     val toCamera = (cameraPosition - center).normalized()
@@ -183,16 +197,22 @@ fun fitPlanePoseFromPoints(
     PlaneFitResult(
         pose = PlanePose(center, rotation, normal),
         depthMeters = depth,
-        details = "ok"
+        inlierPoints = fittedPoints,
+        details = "ok (inliers=${fittedPoints.size}/${worldPoints.size})",
     )
 
 } catch (e: Exception) {
-    PlaneFitResult(null, null, e.message ?: "fit failed")
+    PlaneFitResult(
+        pose = null,
+        depthMeters = null,
+        inlierPoints = emptyList(),
+        details = e.message ?: "fit failed",
+    )
 }
 
 expect fun fitPlaneRegression(
-    points: List<Vector3>
-): Vector3
+    points: List<Vector3>,
+): PlaneRegressionResult
 
 
 /**
