@@ -148,6 +148,7 @@ actual fun ArSceneHost(
     var debugText by remember { mutableStateOf("AR: waiting for renderer") }
     var translationText by remember { mutableStateOf("[UNKNOWN, 0x0 img, 0x0 view]") }
     var mergeDebugText by remember { mutableStateOf("Merge debug: waiting for first merge") }
+    var zoneScreenLabels by remember { mutableStateOf(emptyList<ZoneScreenLabelEntry>()) }
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
@@ -179,6 +180,9 @@ actual fun ArSceneHost(
                     zones = zones,
                 )
             },
+            onZoneScreenLabelsChanged = { labels ->
+                zoneScreenLabels = labels
+            },
         )
     }
 
@@ -193,6 +197,7 @@ actual fun ArSceneHost(
         onDispose {
             detectionPipeline.onSceneDisposed()
             screenOverlays = emptyList()
+            zoneScreenLabels = emptyList()
             coroutineScope.cancel()
         }
     }
@@ -233,6 +238,10 @@ actual fun ArSceneHost(
         )
         ScreenPolygonOverlay(
             overlays = screenOverlays,
+            modifier = Modifier.fillMaxSize(),
+        )
+        ZoneScreenLabelsOverlay(
+            labels = zoneScreenLabels,
             modifier = Modifier.fillMaxSize(),
         )
         Text(

@@ -6,6 +6,8 @@ import com.google.ar.core.Frame
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
+import io.github.sceneview.math.Position
+import io.github.sceneview.utils.worldToScreen
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +26,7 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
+ * @param onZoneScreenLabelsChanged callback invoked when projected on-screen zone labels should be refreshed.
  */
 class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
@@ -32,13 +35,13 @@ class ArDetectionPipeline(
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
+    private val onZoneScreenLabelsChanged: (List<ZoneScreenLabelEntry>) -> Unit = {},
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
     private val zonesManager = ZonesManager(
         onZoneAddition = ::onZoneAdded,
         onZoneDeletion = ::onZoneDeleted,
-        onZoneLabelUpdate = ::onZoneLabelUpdated,
     )
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private var detectionJob: Job? = null
@@ -69,6 +72,7 @@ class ArDetectionPipeline(
         isSceneActive.set(false)
         detectionJob?.cancel()
         sceneView = null
+        onZoneScreenLabelsChanged(emptyList())
         zonesManager.clear()
         renderedNodesByZone.clear()
         baselineLandscapeRotation = null
@@ -111,6 +115,11 @@ class ArDetectionPipeline(
                 )
             )
         }
+        if (trackingState == TrackingState.TRACKING) {
+            publishZoneScreenLabels()
+        } else {
+            onZoneScreenLabelsChanged(emptyList())
+        }
         if (trackingState == TrackingState.TRACKING &&
             now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
             detectionJob?.isActive != true
@@ -132,7 +141,6 @@ class ArDetectionPipeline(
                             Surface.ROTATION_90,
                             Surface.ROTATION_270,
                                 -> {
-                                // First observed landscape side is treated as baseline; opposite side means 180-degree rotation.
                                 val baseline = baselineLandscapeRotation
                                 if (baseline == null) {
                                     baselineLandscapeRotation = displayRotation
@@ -196,7 +204,7 @@ class ArDetectionPipeline(
                                         zone = null,
                                         details =
                                             "Placement aborted: ${error.javaClass.simpleName}: " +
-                                                    (error.message ?: "unknown error"),
+                                                (error.message ?: "unknown error"),
                                     )
                                 }
                                 if (placementResult.zone != null) {
@@ -211,7 +219,7 @@ class ArDetectionPipeline(
                                     removeQueuedZonesFromWorld()
                                     reportStatus(
                                         "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
-                                                "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
+                                            "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
                                         true,
                                     )
                                 } else {
@@ -238,7 +246,7 @@ class ArDetectionPipeline(
 
         if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
             lastStatusAtMs = now
-            val sceneNodes = renderedNodesByZone.values.sumOf { it.size }
+            val sceneNodes = renderedNodesByZone.values.sumOf { nodes -> nodes.size }
             reportStatus(
                 "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}",
                 false,
@@ -267,31 +275,11 @@ class ArDetectionPipeline(
             return
         }
         val activeSceneView = sceneView ?: return
-        val drawnNodes = drawZone(
+        val nodes = drawZoneStaticNodes(
             sceneView = activeSceneView,
             zone = zone,
         )
-        renderedNodesByZone[zone] = drawnNodes.toMutableList()
-    }
-
-    /**
-     * Redraws scene objects for one zone after its label text change.
-     *
-     * @param zone updated zone that should be re-rendered.
-     */
-    private fun onZoneLabelUpdated(zone: Zone) {
-        if (!isSceneActive.get()) {
-            return
-        }
-        val activeSceneView = sceneView ?: return
-        renderedNodesByZone.remove(zone).orEmpty().forEach { node ->
-            runCatching { node.destroy() }
-        }
-        val redrawnNodes = drawZone(
-            sceneView = activeSceneView,
-            zone = zone,
-        )
-        renderedNodesByZone[zone] = redrawnNodes.toMutableList()
+        renderedNodesByZone[zone] = nodes.toMutableList()
     }
 
     /**
@@ -300,10 +288,51 @@ class ArDetectionPipeline(
      * @param zone removed zone whose scene objects should be cleaned up.
      */
     private fun onZoneDeleted(zone: Zone) {
-        val zoneNodes = renderedNodesByZone.remove(zone).orEmpty()
+        val zoneNodes = renderedNodesByZone.remove(zone) ?: return
         zoneNodes.forEach { node ->
-            runCatching { node.destroy() }
+            destroyAnchorNode(node)
         }
+    }
+
+    /**
+     * Projects zone center points to current view and publishes visible label payloads for Compose overlay.
+     *
+     */
+    private fun publishZoneScreenLabels() {
+        val activeSceneView = sceneView ?: return
+        if (activeSceneView.width <= 0 || activeSceneView.height <= 0) {
+            onZoneScreenLabelsChanged(emptyList())
+            return
+        }
+        val labels = zonesManager.getZones().mapNotNull { zone ->
+            val projectedPoint = activeSceneView.view.worldToScreen(
+                Position(zone.center.x, zone.center.y, zone.center.z),
+            )
+            if (!projectedPoint.x.isFinite() || !projectedPoint.y.isFinite()) {
+                return@mapNotNull null
+            }
+            if (projectedPoint.x !in 0f..activeSceneView.width.toFloat() ||
+                projectedPoint.y !in 0f..activeSceneView.height.toFloat()) {
+                return@mapNotNull null
+            }
+            ZoneScreenLabelEntry(
+                text = zone.labelText,
+                xPx = projectedPoint.x,
+                yPx = projectedPoint.y,
+            )
+        }
+        onZoneScreenLabelsChanged(labels)
+    }
+
+    /**
+     * Safely removes one anchor node from scene graph and destroys AR resources.
+     *
+     * @param node anchor node to clean up.
+     */
+    private fun destroyAnchorNode(node: AnchorNode) {
+        runCatching { node.parent?.removeChildNode(node) }
+        runCatching { node.anchor.detach() }
+        runCatching { node.destroy() }
     }
 }
 
@@ -322,6 +351,19 @@ data class TranslationOverlayInfo(
     val imageHeight: Int,
     val viewWidth: Int,
     val viewHeight: Int,
+)
+
+/**
+ * One on-screen zone label tied to projected center of a 3D zone anchor point.
+ *
+ * @param text visible metrics text.
+ * @param xPx horizontal screen coordinate in pixels.
+ * @param yPx vertical screen coordinate in pixels.
+ */
+data class ZoneScreenLabelEntry(
+    val text: String,
+    val xPx: Float,
+    val yPx: Float,
 )
 
 private const val DETECTION_INTERVAL_MS = 5000L

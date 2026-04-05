@@ -1,9 +1,5 @@
 package anton.axenov
 
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color as AndroidColor
-import android.graphics.Paint
 import com.google.ar.core.Anchor
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
@@ -11,22 +7,18 @@ import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.math.Color
 import io.github.sceneview.node.CubeNode
-import io.github.sceneview.node.ImageNode
 import kotlin.math.max
-import korlibs.math.geom.Matrix3
 import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
-import androidx.core.graphics.createBitmap
-import dev.romainguy.kotlin.math.Float3
 
 /**
- * Draws one managed zone polygon and all of its sampled points.
+ * Draws static geometry nodes of one zone: polygon edges, sampled points and 3D bounding box.
  *
  * @param sceneView active SceneView.
  * @param zone zone data to draw.
- * @return created anchor nodes for polygon edges, sampled points and center label.
+ * @return created static anchor nodes.
  */
-fun drawZone(
+fun drawZoneStaticNodes(
     sceneView: ARSceneView,
     zone: Zone,
 ): List<AnchorNode> {
@@ -42,88 +34,9 @@ fun drawZone(
         sceneView = sceneView,
         zone = zone,
     )
-    val labelNode = createWorldTextLabelNode(
-        sceneView = sceneView,
-        worldPoint = zone.center,
-        text = zone.labelText,
-        normalVector = zone.planePose.normal,
-        scale = 0.2f
-    )
-    return polygonNodes + pointNodes + zoneBoundingBoxNodes + listOfNotNull(labelNode)
+    return polygonNodes + pointNodes + zoneBoundingBoxNodes
 }
 
-/**
- * Creates a text label node in world space at provided world point and adds it to the scene.
- *
- * @param sceneView active SceneView.
- * @param worldPoint target world-space point where label anchor should be created.
- * @param text label text content.
- * @param normalVector optional world-space normal used to orient label plane.
- * @param scale text scale.
- * @return created label anchor node or null when session is unavailable.
- */
-fun createWorldTextLabelNode(
-    sceneView: ARSceneView,
-    worldPoint: Vector3,
-    text: String,
-    normalVector: Vector3? = null,
-    scale: Float = 0.5f,
-): AnchorNode? {
-    val session = sceneView.session ?: return null
-    val textBitmap = createTextLabelBitmap(text)
-
-    val anchor = session.createAnchor(
-        createTextLabelAnchorPose(
-            worldPoint = worldPoint,
-            normalVector = normalVector,
-        ),
-    )
-    val anchorNode = AnchorNode(sceneView.engine, anchor)
-    val labelNode = ImageNode(
-        materialLoader = sceneView.materialLoader,
-        bitmap = textBitmap,
-    ).apply {
-        setCulling(false)
-        this.scale = Float3(scale, scale, scale)
-    }
-    labelNode.setCulling(false)
-    anchorNode.addChildNode(labelNode)
-    sceneView.addChildNode(anchorNode)
-    return anchorNode
-}
-
-/**
- * Creates label anchor pose with optional orientation from the supplied plane normal.
- *
- * Local +Z axis is aligned to [normalVector], and local +X is constrained to remain parallel
- * to the ground plane (world horizontal axis), removing label roll/tilt while staying on plane.
- *
- * @param worldPoint anchor world position.
- * @param normalVector optional zone plane normal.
- * @return ARCore pose for label anchor.
- */
-private fun createTextLabelAnchorPose(
-    worldPoint: Vector3,
-    normalVector: Vector3?,
-): Pose {
-    val normalizedNormal =
-        normalVector?.normalized() ?: return Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z)
-    val worldUp = Vector3(0f, 1f, 0f)
-    val candidateAxisX = worldUp.cross(normalizedNormal)
-    val axisX = candidateAxisX.normalized()
-    val axisY = normalizedNormal.cross(axisX).normalized()
-    val labelRotation = Quaternion.fromRotationMatrix(
-        Matrix3.fromColumns(
-            axisX,
-            axisY,
-            normalizedNormal,
-        ),
-    )
-    return Pose(
-        floatArrayOf(worldPoint.x, worldPoint.y, worldPoint.z),
-        floatArrayOf(labelRotation.x, labelRotation.y, labelRotation.z, labelRotation.w),
-    )
-}
 
 /**
  * Creates cube markers for world-space sample points and adds them to the scene.
@@ -211,44 +124,6 @@ private fun createWorldPointMarkerAnchorNode(
     return anchorNode
 }
 
-/**
- * Builds simple bitmap texture with text and rounded rectangle background for AR label rendering.
- *
- * @param text text content to draw.
- * @return bitmap that can be used by SceneView `ImageNode`.
- */
-private fun createTextLabelBitmap(text: String): Bitmap {
-    val safeText = text.ifBlank { DEFAULT_DEBUG_LABEL_TEXT }
-    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.WHITE
-        textSize = LABEL_TEXT_SIZE_PX
-        textAlign = Paint.Align.LEFT
-    }
-    val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.argb(220, 30, 30, 30)
-        style = Paint.Style.FILL
-    }
-    val textWidth = textPaint.measureText(safeText).toInt()
-    val width = (textWidth + LABEL_HORIZONTAL_PADDING_PX * 2).coerceAtLeast(LABEL_MIN_WIDTH_PX)
-    val height = (LABEL_TEXT_SIZE_PX.toInt() + LABEL_VERTICAL_PADDING_PX * 2)
-        .coerceAtLeast(LABEL_MIN_HEIGHT_PX)
-    val bitmap = createBitmap(width.toInt(), height.toInt())
-    val canvas = Canvas(bitmap)
-    canvas.drawRoundRect(
-        0f, 0f, width, height,
-        LABEL_CORNER_RADIUS_PX,
-        LABEL_CORNER_RADIUS_PX,
-        backgroundPaint,
-    )
-    val baselineY = LABEL_VERTICAL_PADDING_PX + LABEL_TEXT_SIZE_PX
-    canvas.drawText(
-        safeText,
-        LABEL_HORIZONTAL_PADDING_PX,
-        baselineY,
-        textPaint,
-    )
-    return bitmap
-}
 
 /**
  * Draws zone 3D bounding box as thin blue wireframe edges.
@@ -346,10 +221,3 @@ private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f
 private const val MIN_EDGE_LENGTH_METERS = 0.001f
 private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
-private const val LABEL_TEXT_SIZE_PX = 24f
-private const val LABEL_HORIZONTAL_PADDING_PX = 8f
-private const val LABEL_VERTICAL_PADDING_PX = 8f
-private const val LABEL_CORNER_RADIUS_PX = 8f
-private const val LABEL_MIN_WIDTH_PX = 50f
-private const val LABEL_MIN_HEIGHT_PX = 30f
-private const val DEFAULT_DEBUG_LABEL_TEXT = "Error: no text"
