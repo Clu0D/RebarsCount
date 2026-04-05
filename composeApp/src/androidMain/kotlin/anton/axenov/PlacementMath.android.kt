@@ -4,12 +4,43 @@ import org.apache.commons.math3.stat.regression.OLSMultipleLinearRegression
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
- * Fits linear plane regression `z = a*x + b*y + c` for Android target.
+ * Fits robust linear plane regression `z = a*x + b*y + c` for Android target.
+ *
+ * Iteratively:
+ * 1) fits using all active points,
+ * 2) computes absolute residuals,
+ * 3) keeps the smallest-residual subset (70%),
+ * 4) refits for 3 rounds.
  *
  * @param points input world-space points.
- * @return vector where `x = a`, `y = b`, `z = c`.
+ * @return regression coefficients and inlier points kept by trimming.
  */
-actual fun fitPlaneRegression(points: List<Vector3>): Vector3 {
+actual fun fitPlaneRegression(points: List<Vector3>): PlaneRegressionResult {
+    require(points.size >= MIN_ROBUST_POINT_COUNT) {
+        "Need at least $MIN_ROBUST_POINT_COUNT points, but got ${points.size}"
+    }
+
+    var activePoints = points
+    var coefficients = estimateCoefficients(activePoints)
+    repeat(ROBUST_REFIT_ITERATIONS) {
+        if (activePoints.size <= MIN_ROBUST_POINT_COUNT) return@repeat
+        val residualsByPoint = activePoints.map { point ->
+            val predictedZ = coefficients.x * point.x + coefficients.y * point.y + coefficients.z
+            point to kotlin.math.abs(point.z - predictedZ)
+        }.sortedBy { (_, residual) -> residual }
+        val pointsToKeep = (activePoints.size * INLIER_KEEP_RATIO).toInt()
+            .coerceIn(MIN_ROBUST_POINT_COUNT, activePoints.size)
+        activePoints = residualsByPoint.take(pointsToKeep).map { (point, _) -> point }
+        coefficients = estimateCoefficients(activePoints)
+    }
+
+    return PlaneRegressionResult(
+        coefficients = coefficients,
+        inlierPoints = activePoints,
+    )
+}
+
+private fun estimateCoefficients(points: List<Vector3>): Vector3 {
     val features = Array(points.size) { i ->
         doubleArrayOf(
             points[i].x.toDouble(),
@@ -30,3 +61,7 @@ actual fun fitPlaneRegression(points: List<Vector3>): Vector3 {
 
     return Vector3(a.toFloat(), b.toFloat(), c.toFloat())
 }
+
+private const val INLIER_KEEP_RATIO = 0.7f
+private const val ROBUST_REFIT_ITERATIONS = 3
+private const val MIN_ROBUST_POINT_COUNT = 3
