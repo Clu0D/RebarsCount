@@ -36,6 +36,7 @@ kotlin {
             implementation(libs.google.arcore)
             implementation(libs.sceneview.arsceneview)
             implementation(libs.commons.math3)
+            implementation(libs.jts.core)
         }
         androidUnitTest.dependencies {
             implementation(libs.kotest.runner.junit5)
@@ -62,6 +63,7 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
             implementation(libs.commons.math3)
+            implementation(libs.jts.core)
         }
         jvmTest.dependencies {
             implementation(libs.kotest.runner.junit5)
