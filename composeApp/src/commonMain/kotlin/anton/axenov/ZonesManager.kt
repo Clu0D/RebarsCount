@@ -77,19 +77,6 @@ data class Zone(
     }
 
     /**
-     * Recalculates zone metrics text for provided camera position.
-     *
-     * @param cameraPosition current camera position in world coordinates.
-     * @return recalculated metrics text.
-     */
-    fun recalculateMetrics(cameraPosition: Vector3): String {
-        return buildZoneMetricsText(
-            zone = this,
-            cameraPosition = cameraPosition,
-        )
-    }
-
-    /**
      * Updates text shown for this zone in AR scene.
      *
      * @param text new label text.
@@ -378,17 +365,25 @@ class ZonesManager(
      * Recalculates and applies zone label metrics for all stored zones.
      *
      * @param cameraPosition current camera position in world coordinates.
+     * @param screenWidth current screen width in pixels.
+     * @param screenHeight current screen height in pixels.
+     * @param worldPointProjector projects world points to current screen coordinates (null if can't).
      * @return number of zones whose visible label text changed.
      */
     fun refreshZoneMetricsLabels(
-        cameraPosition: Vector3
+        cameraPosition: Vector3,
+        screenWidth: Int,
+        screenHeight: Int,
+        worldPointProjector: (Vector3) -> ViewPoint?,
     ): Int {
         var changedZonesCount = 0
         zones.forEach { zone ->
-            zone.recalculateMetrics(cameraPosition)
             val nextLabelText = buildZoneMetricsText(
                 zone = zone,
                 cameraPosition = cameraPosition,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                worldPointProjector = worldPointProjector,
             )
             if (zone.labelText != nextLabelText) {
                 zone.updateLabelText(nextLabelText)

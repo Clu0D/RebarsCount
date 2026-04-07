@@ -87,6 +87,7 @@ class ArDetectionPipeline(
         if (!isSceneActive.get()) {
             return
         }
+        val activeSceneView = sceneView ?: return
 
         if (!asyncPlacementNoticeShown) {
             asyncPlacementNoticeShown = true
@@ -112,7 +113,20 @@ class ArDetectionPipeline(
                     x = cameraPose.tx(),
                     y = cameraPose.ty(),
                     z = cameraPose.tz(),
-                )
+                ),
+                screenWidth = activeSceneView.width,
+                screenHeight = activeSceneView.height,
+                worldPointProjector = { worldPoint ->
+                    val projectedPoint = activeSceneView.view.worldToScreen(
+                        Position(worldPoint.x, worldPoint.y, worldPoint.z),
+                    )
+                    if (!projectedPoint.x.isFinite() || !projectedPoint.y.isFinite())
+                        null
+                    else ViewPoint(
+                        xPx = projectedPoint.x,
+                        yPx = projectedPoint.y,
+                    )
+                },
             )
         }
         if (trackingState == TrackingState.TRACKING) {
@@ -134,7 +148,6 @@ class ArDetectionPipeline(
                     reportStatus("Detection snapshot captured without depth: ${captureResult.details}", true)
                 }
                 lastDetectionAtMs = now
-                val activeSceneView = sceneView ?: return
                 detectionJob = coroutineScope.launch(Dispatchers.Default) {
                     try {
                         val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
@@ -204,7 +217,7 @@ class ArDetectionPipeline(
                                         zone = null,
                                         details =
                                             "Placement aborted: ${error.javaClass.simpleName}: " +
-                                                (error.message ?: "unknown error"),
+                                                    (error.message ?: "unknown error"),
                                     )
                                 }
                                 if (placementResult.zone != null) {
@@ -219,7 +232,7 @@ class ArDetectionPipeline(
                                     removeQueuedZonesFromWorld()
                                     reportStatus(
                                         "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
-                                            "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
+                                                "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
                                         true,
                                     )
                                 } else {
@@ -312,7 +325,8 @@ class ArDetectionPipeline(
                 return@mapNotNull null
             }
             if (projectedPoint.x !in 0f..activeSceneView.width.toFloat() ||
-                projectedPoint.y !in 0f..activeSceneView.height.toFloat()) {
+                projectedPoint.y !in 0f..activeSceneView.height.toFloat()
+            ) {
                 return@mapNotNull null
             }
             ZoneScreenLabelEntry(

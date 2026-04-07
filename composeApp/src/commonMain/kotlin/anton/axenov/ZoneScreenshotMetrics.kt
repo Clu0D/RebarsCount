@@ -2,6 +2,7 @@ package anton.axenov
 
 import kotlin.math.PI
 import kotlin.math.acos
+import kotlin.math.roundToInt
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
@@ -27,7 +28,7 @@ data class ZoneCaptureAngle(
 /**
  * Screen coverage metrics for one projected zone polygon.
  *
- * @param coveragePercent visible polygon area relative to full screen area in percent.
+ * @param coverage visible polygon area relative to full screen area.
  * @param projectedArea full projected polygon area in pixels.
  * @param visibleArea polygon area clipped to screen rectangle in pixels.
  * @param isFullyInside true when polygon lies inside screen bounds.
@@ -38,10 +39,10 @@ data class ZoneScreenCoverageMetrics(
     val isFullyInside: Boolean,
     val screenArea: Float,
 ) {
-    val coveragePercent: Float = if (screenArea <= 0f)
+    val coverage: Float = if (screenArea <= 0f)
         0f
     else
-        (visibleArea / screenArea * 100f).coerceIn(0f, 100f)
+        visibleArea / screenArea
 }
 
 /**
@@ -95,30 +96,78 @@ fun estimateZoneCaptureAngle(
  *
  * @param zone zone that should be described.
  * @param cameraPosition current camera position in world coordinates.
+ * @param screenWidth current screen width in pixels.
+ * @param screenHeight current screen height in pixels.
+ * @param worldPointProjector projects world point into current screen coordinates (null if can't).
  * @return human-readable metric label.
  */
 fun buildZoneMetricsText(
     zone: Zone,
     cameraPosition: Vector3,
+    screenWidth: Int,
+    screenHeight: Int,
+    worldPointProjector: (Vector3) -> ViewPoint?,
 ): String {
     val captureAngle = estimateZoneCaptureAngle(
         planePose = zone.planePose,
         cameraPosition = cameraPosition,
     )
-    val coverages = zone.projectionInputs.map { projectionInput ->
-        calculateZoneScreenCoveragePercent(
-            screenBoundingBox = ScreenBoundingBox(projectionInput.originalScreenPolygon),
-            screenWidth = projectionInput.imageWidth,
-            screenHeight = projectionInput.imageHeight,
-        )
-    }
-    val averageCoverage = if (coverages.isEmpty()) 0f else coverages.average().toFloat()
-    val maxCoverage = coverages.maxOrNull() ?: 0f
+    val coverage = calculateCurrentZoneScreenCoverage(
+        zone = zone,
+        screenWidth = screenWidth,
+        screenHeight = screenHeight,
+        worldPointProjector = worldPointProjector,
+    )
 
     return "ang=${captureAngle.angleDegrees.toPrecision(1)}deg, " +
             "dot=${captureAngle.normalToCameraDot.toPrecision(2)}\n" +
             "dir2d=(${captureAngle.planarDirectionX.toPrecision(2)}," +
-            "${captureAngle.planarDirectionY.toPrecision(2)})" +
-            "cov(avg/max)=${averageCoverage.toPrecision(1)}%/" +
-            "${maxCoverage.toPrecision(1)}% [n=${zone.projectionInputs.size}]"
+            "${captureAngle.planarDirectionY.toPrecision(2)}) " +
+            "cov=${(coverage.coverage * 100f).toPrecision(1)}%, " +
+            "in=${if (coverage.isFullyInside) "Y" else "N"}"
+}
+
+/**
+ * Projects current zone polygon to current camera view and calculates its screen coverage.
+ *
+ * @param zone zone to project.
+ * @param screenWidth current screen width.
+ * @param screenHeight current screen height.
+ * @param worldPointProjector projects world point into current screen coordinates (null if can't).
+ * @return current screen coverage for zone polygon.
+ */
+private fun calculateCurrentZoneScreenCoverage(
+    zone: Zone,
+    screenWidth: Int,
+    screenHeight: Int,
+    worldPointProjector: (Vector3) -> ViewPoint?,
+): ZoneScreenCoverageMetrics {
+    val screenArea = screenWidth.toFloat() * screenHeight.toFloat()
+    if (zone.polygonPoints.size < 3 || screenWidth <= 0 || screenHeight <= 0) {
+        return ZoneScreenCoverageMetrics(
+            projectedArea = 0f,
+            visibleArea = 0f,
+            isFullyInside = false,
+            screenArea = screenArea,
+        )
+    }
+
+    val projectedPolygon = zone.polygonPoints.map { worldPoint ->
+        val projected = worldPointProjector(worldPoint)
+            ?: return ZoneScreenCoverageMetrics(
+                projectedArea = 0f,
+                visibleArea = 0f,
+                isFullyInside = false,
+                screenArea = screenArea,
+            )
+        ImagePoint(
+            x = projected.xPx.roundToInt(),
+            y = projected.yPx.roundToInt(),
+        )
+    }
+    return calculateScreenPolygonCoverage(
+        screenPolygon = projectedPolygon,
+        screenWidth = screenWidth,
+        screenHeight = screenHeight,
+    )
 }
