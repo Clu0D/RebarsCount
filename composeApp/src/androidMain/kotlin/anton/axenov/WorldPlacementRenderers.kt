@@ -37,6 +37,54 @@ fun drawZoneStaticNodes(
     return polygonNodes + pointNodes + zoneBoundingBoxNodes
 }
 
+/**
+ * Draws one short world-space line that starts at snapshot camera position and points
+ * in the snapshot camera forward direction.
+ *
+ * @param sceneView active SceneView.
+ * @param frameSnapshot captured frame snapshot with camera pose.
+ * @return created anchor node or null when AR session is unavailable.
+ */
+fun drawSnapshotCameraDirectionNode(
+    sceneView: ARSceneView,
+    frameSnapshot: DetectionFrameSnapshot,
+): AnchorNode? {
+    val session = sceneView.session ?: return null
+    val cameraPose = frameSnapshot.cameraPose
+    val lineStart = Vector3(
+        cameraPose.tx(),
+        cameraPose.ty(),
+        cameraPose.tz(),
+    )
+    val lineEndWorld = cameraPose.transformPoint(
+        floatArrayOf(0f, 0f, -SNAPSHOT_DIRECTION_LINE_LENGTH_METERS),
+    )
+    val lineEnd = Vector3(
+        lineEndWorld[0],
+        lineEndWorld[1],
+        lineEndWorld[2],
+    )
+    val lineMaterial = sceneView.materialLoader.createColorInstance(
+        Color(1f, 0.55f, 0f, 1f),
+    )
+    return createEdgeAnchorNode(
+        sceneView = sceneView,
+        session = session,
+        start = lineStart,
+        end = lineEnd,
+    ) { edgeLength ->
+        CubeNode(
+            engine = sceneView.engine,
+            size = dev.romainguy.kotlin.math.Float3(
+                edgeLength,
+                SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
+                SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
+            ),
+            materialInstance = lineMaterial,
+        )
+    }
+}
+
 
 /**
  * Creates cube markers for world-space sample points and adds them to the scene.
@@ -221,3 +269,5 @@ private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f
 private const val MIN_EDGE_LENGTH_METERS = 0.001f
 private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
+private const val SNAPSHOT_DIRECTION_LINE_LENGTH_METERS = 0.1f
+private const val SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS = 0.003f

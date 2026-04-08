@@ -39,12 +39,16 @@ class ArDetectionPipeline(
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
-    private val snapshotsManager = SnapshotsManager()
+    private val snapshotsManager = SnapshotsManager(
+        onSnapshotStored = ::onZoneSnapshotStored,
+        onSnapshotRemoved = ::onZoneSnapshotRemoved,
+    )
     private val zonesManager = ZonesManager(
         onZoneAddition = ::onZoneAdded,
         onZoneDeletion = ::onZoneDeleted,
     )
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
+    private val renderedSnapshotNodesByZone = IdentityHashMap<Zone, IdentityHashMap<ZoneSnapshot, AnchorNode>>()
     private var detectionJob: Job? = null
     private var lastDetectionAtMs = 0L
     private var lastMetricsLabelRefreshAtMs = 0L
@@ -77,6 +81,7 @@ class ArDetectionPipeline(
         snapshotsManager.clear()
         zonesManager.clear()
         renderedNodesByZone.clear()
+        renderedSnapshotNodesByZone.clear()
         baselineLandscapeRotation = null
     }
 
@@ -313,9 +318,44 @@ class ArDetectionPipeline(
      */
     private fun onZoneDeleted(zone: Zone) {
         snapshotsManager.removeZone(zone)
+        renderedSnapshotNodesByZone.remove(zone)
         val zoneNodes = renderedNodesByZone.remove(zone) ?: return
         zoneNodes.forEach { node ->
             destroyAnchorNode(node)
+        }
+    }
+
+    /**
+     * Draws one direction marker for newly added zone snapshot.
+     *
+     * @param zone zone that owns the snapshot.
+     * @param snapshot newly persisted snapshot.
+     */
+    private fun onZoneSnapshotStored(zone: Zone, snapshot: ZoneSnapshot) {
+        if (!isSceneActive.get()) {
+            return
+        }
+        val activeSceneView = sceneView ?: return
+        val directionNode = drawSnapshotCameraDirectionNode(
+            sceneView = activeSceneView,
+            frameSnapshot = snapshot.frameSnapshot,
+        ) ?: return
+        val zoneNodes = renderedSnapshotNodesByZone.getOrPut(zone) { IdentityHashMap() }
+        zoneNodes[snapshot] = directionNode
+    }
+
+    /**
+     * Removes one rendered direction marker for removed zone snapshot.
+     *
+     * @param zone zone that owned removed snapshot.
+     * @param snapshot removed persisted snapshot.
+     */
+    private fun onZoneSnapshotRemoved(zone: Zone, snapshot: ZoneSnapshot) {
+        val zoneNodes = renderedSnapshotNodesByZone[zone] ?: return
+        val node = zoneNodes.remove(snapshot) ?: return
+        destroyAnchorNode(node)
+        if (zoneNodes.isEmpty()) {
+            renderedSnapshotNodesByZone.remove(zone)
         }
     }
 

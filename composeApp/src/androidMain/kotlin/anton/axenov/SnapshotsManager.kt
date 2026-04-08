@@ -6,8 +6,14 @@ import java.util.IdentityHashMap
  * Stores per-zone snapshots captured from different viewing angles.
  *
  * @param minAngleDifferenceDegrees minimum required spherical angle difference between stored snapshots.
+ * @param onSnapshotStored callback invoked when snapshot is added.
+ * @param onSnapshotRemoved callback invoked when snapshot is removed.
  */
-class SnapshotsManager(private val minAngleDifferenceDegrees: Float = 5f) {
+class SnapshotsManager(
+    private val minAngleDifferenceDegrees: Float = 5f,
+    private val onSnapshotStored: (zone: Zone, snapshot: ZoneSnapshot) -> Unit = { _, _ -> },
+    private val onSnapshotRemoved: (zone: Zone, snapshot: ZoneSnapshot) -> Unit = { _, _ -> },
+) {
     private val snapshotsByZone = IdentityHashMap<Zone, MutableList<ZoneSnapshot>>()
 
     /**
@@ -43,7 +49,9 @@ class SnapshotsManager(private val minAngleDifferenceDegrees: Float = 5f) {
             }
 
         if (similarSnapshotIndices.isEmpty()) {
-            zoneSnapshots += zoneSnapshotFromFrame(frameSnapshot, captureAngle, screenCoverage)
+            val newSnapshot = zoneSnapshotFromFrame(frameSnapshot, captureAngle, screenCoverage)
+            zoneSnapshots += newSnapshot
+            onSnapshotStored(zone, newSnapshot)
             return SnapshotStoreDecision.ADDED_NEW_ANGLE
         }
 
@@ -60,10 +68,13 @@ class SnapshotsManager(private val minAngleDifferenceDegrees: Float = 5f) {
         similarSnapshotIndices
             .sortedDescending()
             .forEach { index ->
-                zoneSnapshots[index].frameSnapshot.screenshot.recycle()
+                val removedSnapshot = zoneSnapshots[index]
+                removedSnapshot.frameSnapshot.screenshot.recycle()
+                onSnapshotRemoved(zone, removedSnapshot)
                 zoneSnapshots.removeAt(index)
             }
         zoneSnapshots += replacement
+        onSnapshotStored(zone, replacement)
         return SnapshotStoreDecision.REPLACED_BETTER_COVERAGE
     }
 
@@ -92,7 +103,10 @@ class SnapshotsManager(private val minAngleDifferenceDegrees: Float = 5f) {
      */
     fun removeZone(zone: Zone): Int {
         val removed = snapshotsByZone.remove(zone) ?: return 0
-        removed.forEach { snapshot -> snapshot.frameSnapshot.screenshot.recycle() }
+        removed.forEach { snapshot ->
+            snapshot.frameSnapshot.screenshot.recycle()
+            onSnapshotRemoved(zone, snapshot)
+        }
         return removed.size
     }
 
@@ -100,8 +114,11 @@ class SnapshotsManager(private val minAngleDifferenceDegrees: Float = 5f) {
      * Removes all stored zone snapshots and frees bitmap memory.
      */
     fun clear() {
-        snapshotsByZone.values.flatten().forEach { snapshot ->
-            snapshot.frameSnapshot.screenshot.recycle()
+        snapshotsByZone.forEach { (zone, zoneSnapshots) ->
+            zoneSnapshots.forEach { snapshot ->
+                snapshot.frameSnapshot.screenshot.recycle()
+                onSnapshotRemoved(zone, snapshot)
+            }
         }
         snapshotsByZone.clear()
     }
