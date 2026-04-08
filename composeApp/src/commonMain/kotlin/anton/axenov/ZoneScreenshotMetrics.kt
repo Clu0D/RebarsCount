@@ -23,7 +23,20 @@ data class ZoneCaptureAngle(
     val normalToCameraDot: Float,
     val planarDirectionX: Float,
     val planarDirectionY: Float,
-)
+) {
+    /**
+     * Calculates angle between this capture direction and another capture direction.
+     *
+     * @param other another capture direction.
+     * @return angle in degrees in range [0, 180].
+     */
+    fun sphericalAngleTo(other: ZoneCaptureAngle): Float {
+        val firstNormalized = zoneToCameraDirection.normalized()
+        val secondNormalized = other.zoneToCameraDirection.normalized()
+        val dot = firstNormalized.dot(secondNormalized).coerceIn(-1f, 1f)
+        return (acos(dot.toDouble()) * 180.0 / PI).toFloat()
+    }
+}
 
 /**
  * Screen coverage metrics for one projected zone polygon.
