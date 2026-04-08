@@ -79,7 +79,7 @@ internal expect fun calculateScreenPolygonCoverage(
  * @param cameraPosition camera position in world coordinates.
  * @return capture-angle metrics.
  */
-fun estimateZoneCaptureAngle(
+fun getZoneCaptureAngle(
     planePose: PlanePose,
     cameraPosition: Vector3,
 ): ZoneCaptureAngle {
@@ -121,11 +121,11 @@ fun buildZoneMetricsText(
     screenHeight: Int,
     worldPointProjector: (Vector3) -> ViewPoint?,
 ): String {
-    val captureAngle = estimateZoneCaptureAngle(
+    val captureAngle = getZoneCaptureAngle(
         planePose = zone.planePose,
         cameraPosition = cameraPosition,
     )
-    val coverage = calculateCurrentZoneScreenCoverage(
+    val coverage = getZoneScreenCoverage(
         zone = zone,
         screenWidth = screenWidth,
         screenHeight = screenHeight,
@@ -149,7 +149,7 @@ fun buildZoneMetricsText(
  * @param worldPointProjector projects world point into current screen coordinates (null if can't).
  * @return current screen coverage for zone polygon.
  */
-private fun calculateCurrentZoneScreenCoverage(
+fun getZoneScreenCoverage(
     zone: Zone,
     screenWidth: Int,
     screenHeight: Int,

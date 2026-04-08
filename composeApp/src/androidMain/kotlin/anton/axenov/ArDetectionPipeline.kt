@@ -39,6 +39,7 @@ class ArDetectionPipeline(
 ) {
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
+    private val snapshotsManager = SnapshotsManager()
     private val zonesManager = ZonesManager(
         onZoneAddition = ::onZoneAdded,
         onZoneDeletion = ::onZoneDeleted,
@@ -73,6 +74,7 @@ class ArDetectionPipeline(
         detectionJob?.cancel()
         sceneView = null
         onZoneScreenLabelsChanged(emptyList())
+        snapshotsManager.clear()
         zonesManager.clear()
         renderedNodesByZone.clear()
         baselineLandscapeRotation = null
@@ -108,25 +110,34 @@ class ArDetectionPipeline(
         ) {
             lastMetricsLabelRefreshAtMs = now
             val cameraPose = frame.camera.pose
+            val cameraPosition = Vector3(
+                x = cameraPose.tx(),
+                y = cameraPose.ty(),
+                z = cameraPose.tz(),
+            )
+            val worldPointProjector: (Vector3) -> ViewPoint? = { worldPoint ->
+                val projectedPoint = activeSceneView.view.worldToScreen(
+                    Position(worldPoint.x, worldPoint.y, worldPoint.z),
+                )
+                if (!projectedPoint.x.isFinite() || !projectedPoint.y.isFinite())
+                    null
+                else ViewPoint(
+                    xPx = projectedPoint.x,
+                    yPx = projectedPoint.y,
+                )
+            }
             zonesManager.refreshZoneMetricsLabels(
-                cameraPosition = Vector3(
-                    x = cameraPose.tx(),
-                    y = cameraPose.ty(),
-                    z = cameraPose.tz(),
-                ),
+                cameraPosition = cameraPosition,
                 screenWidth = activeSceneView.width,
                 screenHeight = activeSceneView.height,
-                worldPointProjector = { worldPoint ->
-                    val projectedPoint = activeSceneView.view.worldToScreen(
-                        Position(worldPoint.x, worldPoint.y, worldPoint.z),
-                    )
-                    if (!projectedPoint.x.isFinite() || !projectedPoint.y.isFinite())
-                        null
-                    else ViewPoint(
-                        xPx = projectedPoint.x,
-                        yPx = projectedPoint.y,
-                    )
-                },
+                worldPointProjector = worldPointProjector,
+            )
+            addZoneSnapshots(
+                frame = frame,
+                cameraPosition = cameraPosition,
+                screenWidth = activeSceneView.width,
+                screenHeight = activeSceneView.height,
+                worldPointProjector = worldPointProjector,
             )
         }
         if (trackingState == TrackingState.TRACKING) {
@@ -301,9 +312,43 @@ class ArDetectionPipeline(
      * @param zone removed zone whose scene objects should be cleaned up.
      */
     private fun onZoneDeleted(zone: Zone) {
+        snapshotsManager.removeZone(zone)
         val zoneNodes = renderedNodesByZone.remove(zone) ?: return
         zoneNodes.forEach { node ->
             destroyAnchorNode(node)
+        }
+    }
+
+    /**
+     * Captures camera image for current frame and stores per-zone snapshots by angular uniqueness.
+     *
+     * @param frame current ARCore frame.
+     * @param cameraPosition current camera world position.
+     * @param screenWidth current view width.
+     * @param screenHeight current view height.
+     * @param worldPointProjector current world-to-screen projector.
+     */
+    private fun addZoneSnapshots(
+        frame: Frame,
+        cameraPosition: Vector3,
+        screenWidth: Int,
+        screenHeight: Int,
+        worldPointProjector: (Vector3) -> ViewPoint?,
+    ) {
+        val zones = zonesManager.getZones()
+        if (zones.isEmpty()) {
+            return
+        }
+        val captureResult = captureDetectionFrameSnapshot(frame)
+        val snapshot = captureResult.snapshot ?: return
+        try {
+            zones.forEach { zone ->
+                val captureAngle = getZoneCaptureAngle(zone.planePose, cameraPosition)
+                val screenCoverage = getZoneScreenCoverage(zone, screenWidth, screenHeight, worldPointProjector)
+                snapshotsManager.addSnapshot(zone, snapshot, captureAngle, screenCoverage)
+            }
+        } finally {
+            snapshot.screenshot.recycle()
         }
     }
 

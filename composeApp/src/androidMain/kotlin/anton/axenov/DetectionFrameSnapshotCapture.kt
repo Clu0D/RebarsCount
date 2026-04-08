@@ -144,3 +144,12 @@ private fun depthImageToSnapshot(image: Image): DepthSnapshot {
         values = values,
     )
 }
+
+/**
+ * Creates immutable bitmap copy suitable for long-lived storage.
+ *
+ * @return copied immutable bitmap.
+ */
+fun Bitmap.copyBitmapForStorage(): Bitmap {
+    return copy(config ?: Bitmap.Config.ARGB_8888, false)
+}
