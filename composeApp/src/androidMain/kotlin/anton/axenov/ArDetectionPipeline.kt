@@ -26,8 +26,9 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param zoneDetector detector used to extract interest zones from snapshots.
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
+ * @param onUploadQueueInfoChanged callback invoked when upload queue diagnostics should be updated.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
- * @param onZoneScreenLabelsChanged callback invoked when projected on-screen zone labels should be refreshed.
+ * @param onZoneScreenLabelsChanged callback invoked when projected on-screen zone labels should be updated.
  */
 class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
@@ -36,6 +37,7 @@ class ArDetectionPipeline(
     private val zoneDetector: DetectInterestZones = DetectInterestZones(),
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
+    private val onUploadQueueInfoChanged: (String) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
     private val onZoneScreenLabelsChanged: (List<ZoneScreenLabelEntry>) -> Unit = {},
 ) {
@@ -63,6 +65,17 @@ class ArDetectionPipeline(
     private var lastStatusAtMs = 0L
     private var baselineLandscapeRotation: Int? = null
     private var lastTranslationVariant: CoordinateTranslationVariant? = null
+    private val snapshotUploadQueue = SnapshotUploadQueue(
+        coroutineScope = coroutineScope,
+        segmentationServerClient = segmentationServerClient,
+        onQueueInfoChanged = onUploadQueueInfoChanged,
+        onUploadFailure = { zoneId, error ->
+            reportStatus(
+                "Server upload failed for zone $zoneId: ${error.message ?: error.javaClass.simpleName}",
+                true,
+            )
+        },
+    )
 
     /**
      * Registers active SceneView instance for subsequent session updates.
@@ -72,6 +85,7 @@ class ArDetectionPipeline(
     fun onSceneCreated(sceneView: ARSceneView) {
         this.sceneView = sceneView
         isSceneActive.set(true)
+        snapshotUploadQueue.start()
     }
 
     /**
@@ -81,6 +95,7 @@ class ArDetectionPipeline(
         isSceneActive.set(false)
         detectionJob?.cancel()
         serverStatusJob?.cancel()
+        snapshotUploadQueue.stop()
         sceneView = null
         onZoneScreenLabelsChanged(emptyList())
         snapshotsManager.clear()
@@ -119,7 +134,11 @@ class ArDetectionPipeline(
             lastStatusAtMs = now
             val sceneNodes = renderedNodesByZone.values.sumOf { nodes -> nodes.size }
             reportStatus(
-                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}",
+                "Frame ts=${frame.timestamp}, " +
+                        "tracking=${trackingState.name}, " +
+                        "zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}, " +
+                        "uploadQueue=${snapshotUploadQueue.queuedCount()}, " +
+                        "uploadActive=${snapshotUploadQueue.activeCount()}",
                 false,
             )
         }
@@ -350,17 +369,8 @@ class ArDetectionPipeline(
             val zoneNodes = renderedSnapshotNodesByZone.getOrPut(zone) { IdentityHashMap() }
             zoneNodes[snapshot] = directionNode
         }
-        coroutineScope.launch(Dispatchers.IO) {
-            runCatching {
-                segmentationServerClient.uploadSnapshot(
-                    snapshot.toPayload(zone),
-                )
-            }.onFailure { error ->
-                reportStatus(
-                    "Server upload failed for zone ${zone.id}: ${error.message ?: error.javaClass.simpleName}",
-                    true,
-                )
-            }
+        if (!snapshotUploadQueue.enqueue(zone.id, snapshot.toPayload(zone))) {
+            reportStatus("Server upload queue is unavailable for zone ${zone.id}", true)
         }
     }
 
