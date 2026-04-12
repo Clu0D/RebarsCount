@@ -20,7 +20,7 @@ kotlin {
     
     sourceSets {
         commonMain.dependencies {
-            implementation(libs.korlibs.math)
+            api(libs.korlibs.math)
             implementation(libs.kotlinx.serialization.json)
         }
         commonTest.dependencies {
