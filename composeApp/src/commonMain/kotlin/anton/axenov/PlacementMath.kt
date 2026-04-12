@@ -1,22 +1,8 @@
 package anton.axenov
 
 import kotlin.random.Random
-import korlibs.math.geom.Quaternion as Quaternion
-import korlibs.math.geom.Vector3F as Vector3
-
-/**
- * Plane pose payload returned by shared fitting logic.
- *
- * @param center plane center.
- * @param rotation orientation quaternion where local +Z is the plane normal.
- * @param normal fitted normal.
- */
-data class PlanePose(
-    val center: Vector3,
-    val rotation: Quaternion,
-    val normal: Vector3,
-    val offsetD: Float = -normal.dot(center),
-)
+import korlibs.math.geom.Quaternion
+import korlibs.math.geom.Vector3F
 
 /**
  * Result of 3D plane fitting attempt.
@@ -28,7 +14,7 @@ data class PlanePose(
 data class PlaneFitResult(
     val pose: PlanePose?,
     val depthMeters: Float?,
-    val inlierPoints: List<Vector3> = emptyList(),
+    val inlierPoints: List<Vector3F> = emptyList(),
     val details: String,
 )
 
@@ -39,19 +25,8 @@ data class PlaneFitResult(
  * @param inlierPoints points kept after robust residual filtering.
  */
 data class PlaneRegressionResult(
-    val coefficients: Vector3,
-    val inlierPoints: List<Vector3>,
-)
-
-/**
- * Pixel point in image coordinates.
- *
- * @param x X coordinate.
- * @param y Y coordinate.
- */
-data class ImagePoint(
-    val x: Int,
-    val y: Int,
+    val coefficients: Vector3F,
+    val inlierPoints: List<Vector3F>,
 )
 
 /**
@@ -168,8 +143,8 @@ fun mapImagePointsToViewPoints(
  * @return plane fit result with diagnostics.
  */
 fun fitPlanePoseFromPoints(
-    worldPoints: List<Vector3>,
-    cameraPosition: Vector3,
+    worldPoints: List<Vector3F>,
+    cameraPosition: Vector3F,
     minPointCount: Int,
 ): PlaneFitResult = if (worldPoints.size < minPointCount) {
     PlaneFitResult(
@@ -183,7 +158,7 @@ fun fitPlanePoseFromPoints(
     val fittedPoints = regressionResult.inlierPoints
 
     // plane normal for z = ax + by + c
-    var normal = Vector3(-a, -b, 1f).normalized()
+    var normal = Vector3F(-a, -b, 1f).normalized()
 
     val center = fittedPoints.reduce { acc, v -> acc + v } / fittedPoints.size.toFloat()
 
@@ -191,7 +166,7 @@ fun fitPlanePoseFromPoints(
     val toCamera = (cameraPosition - center).normalized()
     if (normal.dot(toCamera) < 0f) normal = -normal
 
-    val rotation = Quaternion.fromVectors(Vector3(0f, 0f, 1f), normal)
+    val rotation = Quaternion.fromVectors(Vector3F(0f, 0f, 1f), normal)
     val depth = (cameraPosition - center).length
 
     PlaneFitResult(
@@ -211,56 +186,7 @@ fun fitPlanePoseFromPoints(
 }
 
 expect fun fitPlaneRegression(
-    points: List<Vector3>,
+    points: List<Vector3F>,
 ): PlaneRegressionResult
 
 
-/**
- * Translates one detector-space point to image-space coordinates used by placement math.
- *
- * @param x detector-space X coordinate.
- * @param y detector-space Y coordinate.
- * @param width source image width in pixels.
- * @param height source image height in pixels.
- * @param translationVariant detector-to-image translation variant.
- * @return translated and clamped image-space point.
- */
-fun translateCoordinates(
-    x: Int,
-    y: Int,
-    width: Int,
-    height: Int,
-    translationVariant: CoordinateTranslationVariant,
-): ImagePoint {
-    if (width <= 0 || height <= 0) {
-        return ImagePoint(0, 0)
-    }
-
-    val safeX = x.coerceIn(0, width - 1)
-    val safeY = y.coerceIn(0, height - 1)
-    return when (translationVariant) {
-        CoordinateTranslationVariant.PORTRAIT -> ImagePoint(
-            x = safeY * width / height,
-            y = (width - 1 - safeX) * height / width,
-        )
-
-        CoordinateTranslationVariant.LANDSCAPE -> ImagePoint(
-            x = width - 1 - safeX,
-            y = height - 1 - safeY,
-        )
-
-        CoordinateTranslationVariant.LANDSCAPE_REVERSED -> ImagePoint(
-            x = safeX,
-            y = safeY,
-        )
-    }
-}
-
-/**
- * Translation strategy by orientation.
- */
-enum class CoordinateTranslationVariant {
-    PORTRAIT,
-    LANDSCAPE,
-    LANDSCAPE_REVERSED,
-}

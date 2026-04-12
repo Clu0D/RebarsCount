@@ -6,59 +6,6 @@ import kotlin.math.roundToInt
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
- * Camera-to-zone orientation metrics for one screenshot.
- *
- * @param angleDegrees angle between zone normal and zone-to-camera direction in degrees.
- *      0 is aligned with normal
- *      90 is sideview
- *      > 90 behind the plane
- * @param zoneToCameraDirection normalized direction from plane center to camera position.
- * @param normalToCameraDot dot product of normalized plane normal and zone-to-camera direction.
- * @param planarDirectionX direction to the camera projected onto zone plane local 2D axes by x.
- * @param planarDirectionY direction to the camera projected onto zone plane local 2D axes by y.
- */
-data class ZoneCaptureAngle(
-    val angleDegrees: Float,
-    val zoneToCameraDirection: Vector3,
-    val normalToCameraDot: Float,
-    val planarDirectionX: Float,
-    val planarDirectionY: Float,
-) {
-    /**
-     * Calculates angle between this capture direction and another capture direction.
-     *
-     * @param other another capture direction.
-     * @return angle in degrees in range [0, 180].
-     */
-    fun sphericalAngleTo(other: ZoneCaptureAngle): Float {
-        val firstNormalized = zoneToCameraDirection.normalized()
-        val secondNormalized = other.zoneToCameraDirection.normalized()
-        val dot = firstNormalized.dot(secondNormalized).coerceIn(-1f, 1f)
-        return (acos(dot.toDouble()) * 180.0 / PI).toFloat()
-    }
-}
-
-/**
- * Screen coverage metrics for one projected zone polygon.
- *
- * @param coverage visible polygon area relative to full screen area.
- * @param projectedArea full projected polygon area in pixels.
- * @param visibleArea polygon area clipped to screen rectangle in pixels.
- * @param isFullyInside true when polygon lies inside screen bounds.
- */
-data class ZoneScreenCoverageMetrics(
-    val projectedArea: Float,
-    val visibleArea: Float,
-    val isFullyInside: Boolean,
-    val screenArea: Float,
-) {
-    val coverage: Float = if (screenArea <= 0f)
-        0f
-    else
-        visibleArea / screenArea
-}
-
-/**
  * Calculates polygon area and visible area using target-platform geometry library.
  *
  * @param screenPolygon polygon points in screen pixels.

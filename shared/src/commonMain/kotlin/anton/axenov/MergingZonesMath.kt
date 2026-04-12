@@ -1,6 +1,6 @@
 package anton.axenov
 
-import korlibs.math.geom.Vector3
+import korlibs.math.geom.Vector3F
 import kotlin.math.roundToInt
 
 /**
@@ -11,17 +11,17 @@ import kotlin.math.roundToInt
  * @return hull vertices in counterclockwise order in world coordinates.
  */
 fun buildConvexHullOnPlane(
-    worldPoints: List<Vector3>,
+    worldPoints: List<Vector3F>,
     planePose: PlanePose,
-): List<Vector3> {
+): List<Vector3F> {
     if (worldPoints.size <= 1) {
         return worldPoints
     }
     val normal = planePose.normal.normalized()
     val helperAxis = if (kotlin.math.abs(normal.y) < 0.99f) {
-        Vector3(0f, 1f, 0f)
+        Vector3F(0f, 1f, 0f)
     } else {
-        Vector3(1f, 0f, 0f)
+        Vector3F(1f, 0f, 0f)
     }
     val axisX = normal.cross(helperAxis).normalized()
     val axisY = normal.cross(axisX).normalized()
@@ -97,8 +97,7 @@ private fun Float.roundToHullPrecision(): Int {
 private data class HullPoint2d(
     val x: Float,
     val y: Float,
-    val worldPoint: Vector3,
+    val worldPoint: Vector3F,
 )
-
 
 private const val HULL_POINT_PRECISION_SCALE = 100_000f

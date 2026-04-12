@@ -48,8 +48,11 @@ import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
 
 /**
  * Renders Android AR sample content.
@@ -161,7 +164,15 @@ actual fun ArSceneHost(
     val segmentationServerClient = remember(segmentationServerBaseUrl) {
         SegmentationServerClient(
             baseUrl = segmentationServerBaseUrl,
-            httpClient = HttpClient(OkHttp),
+            httpClient = HttpClient(OkHttp) {
+                install(ContentNegotiation) {
+                    json(
+                        Json {
+                            ignoreUnknownKeys = true
+                        },
+                    )
+                }
+            },
         )
     }
     val statusReporter = remember {

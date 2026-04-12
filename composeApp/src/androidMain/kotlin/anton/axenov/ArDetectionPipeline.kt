@@ -353,7 +353,7 @@ class ArDetectionPipeline(
         coroutineScope.launch(Dispatchers.IO) {
             runCatching {
                 segmentationServerClient.uploadSnapshot(
-                    buildZoneSnapshotUploadPayload(zone, snapshot),
+                    snapshot.toPayload(zone),
                 )
             }.onFailure { error ->
                 reportStatus(

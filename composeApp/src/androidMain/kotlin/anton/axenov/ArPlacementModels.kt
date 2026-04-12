@@ -31,21 +31,6 @@ data class DetectionFrameSnapshot(
 )
 
 /**
- * Depth map sampled from one frame.
- *
- * Values are raw ARCore `DEPTH16` values.
- *
- * @param width depth image width.
- * @param height depth image height.
- * @param values depth values in row-major order.
- */
-data class DepthSnapshot(
-    val width: Int,
-    val height: Int,
-    val values: ShortArray,
-)
-
-/**
  * Result of snapshot capture attempt.
  *
  * @param snapshot captured frame snapshot or null when capture failed.
