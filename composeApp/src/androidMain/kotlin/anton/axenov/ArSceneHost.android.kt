@@ -46,6 +46,8 @@ import com.google.ar.core.Config
 import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 
@@ -147,11 +149,21 @@ actual fun ArSceneHost(
 
     var debugText by remember { mutableStateOf("AR: waiting for renderer") }
     var translationText by remember { mutableStateOf("[UNKNOWN, 0x0 img, 0x0 view]") }
+    var serverText by remember { mutableStateOf("Server: checking") }
     var mergeDebugText by remember { mutableStateOf("Merge debug: waiting for first merge") }
     var zoneScreenLabels by remember { mutableStateOf(emptyList<ZoneScreenLabelEntry>()) }
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
+    val segmentationServerBaseUrl = remember(context) {
+        context.getString(R.string.segmentation_server_base_url)
+    }
+    val segmentationServerClient = remember(segmentationServerBaseUrl) {
+        SegmentationServerClient(
+            baseUrl = segmentationServerBaseUrl,
+            httpClient = HttpClient(OkHttp),
+        )
+    }
     val statusReporter = remember {
         SceneStatusReporter { debugMessage ->
             debugText = debugMessage
@@ -190,6 +202,20 @@ actual fun ArSceneHost(
         while (true) {
             delay(SCREEN_OVERLAY_PRUNE_INTERVAL_MS)
             screenOverlays = screenOverlayStore.pruneExpired(screenOverlays)
+        }
+    }
+
+    LaunchedEffect(segmentationServerClient) {
+        serverText = runCatching {
+            "Server: ${segmentationServerClient.requestHealth()}"
+        }.getOrElse { error ->
+            "Server: ${error.message ?: error.javaClass.simpleName}"
+        }
+    }
+
+    DisposableEffect(segmentationServerClient) {
+        onDispose {
+            segmentationServerClient.close()
         }
     }
 
@@ -245,7 +271,7 @@ actual fun ArSceneHost(
             modifier = Modifier.fillMaxSize(),
         )
         Text(
-            text = "$translationText\n$mergeDebugText\n$debugText",
+            text = "$translationText\n$serverText\n$mergeDebugText\n$debugText",
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(12.dp)

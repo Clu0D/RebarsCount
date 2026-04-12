@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">ArTest</string>
+    <string name="segmentation_server_base_url">http://192.168.0.76:8000</string>
 </resources>

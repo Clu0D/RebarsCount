@@ -33,6 +33,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.ktor.clientOkHttp)
             implementation(libs.google.arcore)
             implementation(libs.sceneview.arsceneview)
             implementation(libs.commons.math3)
@@ -53,6 +54,7 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.korlibs.math)
+            implementation(libs.ktor.clientCore)
             implementation(projects.shared)
         }
         commonTest.dependencies {
@@ -68,6 +70,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.kotest.runner.junit5)
             implementation(libs.kotest.assertions.core)
+            implementation(libs.ktor.clientMock)
             implementation(libs.mockk)
         }
     }
