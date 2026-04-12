@@ -7,20 +7,25 @@ import kotlin.math.min
 /**
  * One detected zone represented in world space.
  *
+ * @param id unique zone identifier.
  * @param sampledPoints sampled world points used to estimate infinite plane.
  * @param planePose mathematical parameters of fitted infinite plane.
  * @param projectionInputs all original projection payloads used to build source polygons.
  */
 data class Zone(
+    val id: Long = nextZoneId(),
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
     val projectionInputs: List<ZoneProjectionInput> = emptyList(),
 ) {
+    var metricsLabelText: String = "Metrics: waiting"
+    var serverLabelText: String? = null
+
     /**
      * Current text shown in the zone label in AR scene.
      */
-    var labelText: String = "Error: no text"
-        private set
+    val labelText: String
+        get() = "$metricsLabelText\n${serverLabelText ?: ""}"
 
     val polygonPoints: List<Vector3> by lazy {
         if (projectionInputs.isEmpty())
@@ -74,17 +79,6 @@ data class Zone(
             (boundingBox.maxY + boundingBox.minY) / 2f,
             (boundingBox.maxZ + boundingBox.minZ) / 2f,
         )
-    }
-
-    /**
-     * Updates text shown for this zone in AR scene.
-     *
-     * @param text new label text.
-     * @return updated label text.
-     */
-    fun updateLabelText(text: String): String {
-        labelText = text
-        return labelText
     }
 }
 
@@ -378,6 +372,7 @@ class ZonesManager(
     ): Int {
         var changedZonesCount = 0
         zones.forEach { zone ->
+            val previousLabelText = zone.labelText
             val nextLabelText = buildZoneMetricsText(
                 zone = zone,
                 cameraPosition = cameraPosition,
@@ -385,8 +380,31 @@ class ZonesManager(
                 screenHeight = screenHeight,
                 worldPointProjector = worldPointProjector,
             )
-            if (zone.labelText != nextLabelText) {
-                zone.updateLabelText(nextLabelText)
+            zone.metricsLabelText = nextLabelText
+            if (previousLabelText != zone.labelText) {
+                onZoneLabelUpdate(zone)
+                changedZonesCount++
+            }
+        }
+        return changedZonesCount
+    }
+
+    /**
+     * Applies server texts to currently stored zones by identifier.
+     *
+     * @param textsByZoneId map of zone id to server text.
+     * @return number of zones whose combined label text changed.
+     */
+    fun applyServerTexts(textsByZoneId: Map<Long, String>): Int {
+        if (textsByZoneId.isEmpty()) {
+            return 0
+        }
+        var changedZonesCount = 0
+        zones.forEach { zone ->
+            val nextServerText = textsByZoneId[zone.id] ?: return@forEach
+            val previousLabelText = zone.labelText
+            zone.serverLabelText = nextServerText
+            if (previousLabelText != zone.labelText) {
                 onZoneLabelUpdate(zone)
                 changedZonesCount++
             }
@@ -511,3 +529,6 @@ private const val MIN_PADDING_METERS = 0.05f
 private const val MIN_BOX_VOLUME_EPSILON = 1e-8f
 private const val RAY_PLANE_EPSILON = 1e-5f
 private const val MERGE_PLANE_MIN_POINT_COUNT = 3
+
+private var nextGeneratedZoneId: Long = 1L
+private fun nextZoneId(): Long = nextGeneratedZoneId++

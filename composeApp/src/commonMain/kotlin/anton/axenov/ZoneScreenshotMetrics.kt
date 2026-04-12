@@ -132,7 +132,7 @@ fun buildZoneMetricsText(
         worldPointProjector = worldPointProjector,
     )
 
-    return "ang=${captureAngle.angleDegrees.toPrecision(1)}deg, " +
+    return "id=${zone.id}, ang=${captureAngle.angleDegrees.toPrecision(1)}deg, " +
             "dot=${captureAngle.normalToCameraDot.toPrecision(2)}\n" +
             "dir2d=(${captureAngle.planarDirectionX.toPrecision(2)}," +
             "${captureAngle.planarDirectionY.toPrecision(2)}) " +
