@@ -1,12 +1,16 @@
 package anton.axenov
 
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.statement.bodyAsText
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.utils.io.core.Closeable
 
 /**
- * Requests health information from the segmentation server.
+ * Client for talking with segmentation server.
  *
  * @param baseUrl server base URL without endpoint path.
  * @param httpClient HTTP client used to perform requests.
@@ -18,12 +22,51 @@ class SegmentationServerClient(
     private val normalizedBaseUrl = baseUrl.trimEnd('/')
 
     /**
-     * Requests the segmentation server health endpoint.
+     * Requests segmentation server health.
      *
-     * @return response body returned by the server.
+     * @return health response.
      */
-    suspend fun requestHealth(): String =
-        httpClient.get("$normalizedBaseUrl/health").bodyAsText()
+    suspend fun requestHealth(): ServerHealthResponseDto {
+        return httpClient
+            .get("$normalizedBaseUrl/health")
+            .body()
+    }
+
+    /**
+     * Uploads one stored zone snapshot.
+     *
+     * @param payload serializable snapshot payload.
+     * @return upload response.
+     */
+    suspend fun uploadSnapshot(payload: ZoneSnapshotUploadDto): SnapshotUploadResponseDto {
+        return httpClient
+            .post("$normalizedBaseUrl/snapshots") {
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
+            .body()
+    }
+
+    /**
+     * Fetches zone statuses from the server.
+     *
+     * @return current statuses for known zones.
+     */
+    suspend fun fetchZoneStatuses(): List<ZoneStatusDto> {
+        return httpClient
+            .get("$normalizedBaseUrl/zone-statuses")
+            .body()
+    }
+
+    /**
+     * Fetches current zone texts keyed by zone id.
+     *
+     * @return map of zone id to server text.
+     */
+    suspend fun fetchZoneTexts(): Map<Long, String> {
+        return fetchZoneStatuses()
+            .associate { status -> status.zone to status.text }
+    }
 
     /**
      * Releases HTTP client resources.
