@@ -22,6 +22,7 @@ import korlibs.math.geom.Vector3F as Vector3
  *
  * @param coroutineScope scope used to run asynchronous detection work.
  * @param reportStatus callback used to publish user-visible diagnostics.
+ * @param segmentationServerClient client used to upload snapshots and fetch info from server.
  * @param zoneDetector detector used to extract interest zones from snapshots.
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
@@ -31,6 +32,7 @@ import korlibs.math.geom.Vector3F as Vector3
 class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
+    private val segmentationServerClient: SegmentationServerClient,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(),
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
@@ -50,8 +52,10 @@ class ArDetectionPipeline(
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private val renderedSnapshotNodesByZone = IdentityHashMap<Zone, IdentityHashMap<ZoneSnapshot, AnchorNode>>()
     private var detectionJob: Job? = null
+    private var serverStatusJob: Job? = null
     private var lastDetectionAtMs = 0L
     private var lastMetricsLabelRefreshAtMs = 0L
+    private var lastServerStatusRefreshAtMs = 0L
     private var lastCaptureFailureAtMs = 0L
     private var lastDepthUnavailableLogAtMs = 0L
     private var asyncPlacementNoticeShown = false
@@ -76,6 +80,7 @@ class ArDetectionPipeline(
     fun onSceneDisposed() {
         isSceneActive.set(false)
         detectionJob?.cancel()
+        serverStatusJob?.cancel()
         sceneView = null
         onZoneScreenLabelsChanged(emptyList())
         snapshotsManager.clear()
@@ -110,9 +115,20 @@ class ArDetectionPipeline(
         }
 
         val now = SystemClock.elapsedRealtime()
-        if (trackingState == TrackingState.TRACKING &&
-            now - lastMetricsLabelRefreshAtMs >= METRICS_LABEL_REFRESH_INTERVAL_MS
-        ) {
+        if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
+            lastStatusAtMs = now
+            val sceneNodes = renderedNodesByZone.values.sumOf { nodes -> nodes.size }
+            reportStatus(
+                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}",
+                false,
+            )
+        }
+        if (trackingState != TrackingState.TRACKING) {
+            onZoneScreenLabelsChanged(emptyList())
+            return
+        }
+
+        if (now - lastMetricsLabelRefreshAtMs >= METRICS_LABEL_REFRESH_INTERVAL_MS) {
             lastMetricsLabelRefreshAtMs = now
             val cameraPose = frame.camera.pose
             val cameraPosition = Vector3(
@@ -145,15 +161,15 @@ class ArDetectionPipeline(
                 worldPointProjector = worldPointProjector,
             )
         }
-        if (trackingState == TrackingState.TRACKING) {
-            publishZoneScreenLabels()
-        } else {
-            onZoneScreenLabelsChanged(emptyList())
+
+        if (now - lastServerStatusRefreshAtMs >= SERVER_REFRESH_INTERVAL_MS && serverStatusJob?.isActive != true) {
+            lastServerStatusRefreshAtMs = now
+            requestServerUpdates()
         }
-        if (trackingState == TrackingState.TRACKING &&
-            now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
-            detectionJob?.isActive != true
-        ) {
+
+        publishZoneScreenLabels()
+
+        if (now - lastDetectionAtMs >= DETECTION_INTERVAL_MS && detectionJob?.isActive != true) {
             val captureResult = captureDetectionFrameSnapshot(frame)
             val snapshot = captureResult.snapshot
             if (snapshot != null) {
@@ -272,15 +288,6 @@ class ArDetectionPipeline(
                 reportStatus("Detection snapshot skipped: ${captureResult.details}", false)
             }
         }
-
-        if (now - lastStatusAtMs >= FRAME_STATUS_INTERVAL_MS) {
-            lastStatusAtMs = now
-            val sceneNodes = renderedNodesByZone.values.sumOf { nodes -> nodes.size }
-            reportStatus(
-                "Frame ts=${frame.timestamp}, tracking=${trackingState.name}, zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}",
-                false,
-            )
-        }
     }
 
     /**
@@ -336,12 +343,25 @@ class ArDetectionPipeline(
             return
         }
         val activeSceneView = sceneView ?: return
-        val directionNode = drawSnapshotCameraDirectionNode(
+        drawSnapshotCameraDirectionNode(
             sceneView = activeSceneView,
             frameSnapshot = snapshot.frameSnapshot,
-        ) ?: return
-        val zoneNodes = renderedSnapshotNodesByZone.getOrPut(zone) { IdentityHashMap() }
-        zoneNodes[snapshot] = directionNode
+        )?.also { directionNode ->
+            val zoneNodes = renderedSnapshotNodesByZone.getOrPut(zone) { IdentityHashMap() }
+            zoneNodes[snapshot] = directionNode
+        }
+        coroutineScope.launch(Dispatchers.IO) {
+            runCatching {
+                segmentationServerClient.uploadSnapshot(
+                    buildZoneSnapshotUploadPayload(zone, snapshot),
+                )
+            }.onFailure { error ->
+                reportStatus(
+                    "Server upload failed for zone ${zone.id}: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+            }
+        }
     }
 
     /**
@@ -389,6 +409,32 @@ class ArDetectionPipeline(
             }
         } finally {
             snapshot.screenshot.recycle()
+        }
+    }
+
+    /**
+     * Requests latest updates from server.
+     */
+    private fun requestServerUpdates() {
+        serverStatusJob = coroutineScope.launch {
+            val zoneTexts = runCatching {
+                withContext(Dispatchers.IO) {
+                    segmentationServerClient.fetchZoneTexts()
+                }
+            }.getOrElse { error ->
+                reportStatus(
+                    "Server status fetch failed: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+                return@launch
+            }
+            if (!isSceneActive.get()) {
+                return@launch
+            }
+            val changedZones = zonesManager.applyServerTexts(zoneTexts)
+            if (changedZones > 0) {
+                publishZoneScreenLabels()
+            }
         }
     }
 
@@ -469,3 +515,4 @@ private const val DETECTION_INTERVAL_MS = 5000L
 private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L
 private const val FRAME_STATUS_INTERVAL_MS = 1000L
 private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 200L
+private const val SERVER_REFRESH_INTERVAL_MS = 500L

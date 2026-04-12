@@ -169,10 +169,16 @@ actual fun ArSceneHost(
             debugText = debugMessage
         }
     }
-    val detectionPipeline = remember(coroutineScope, statusReporter, screenOverlayStore) {
+    val detectionPipeline = remember(
+        coroutineScope,
+        statusReporter,
+        screenOverlayStore,
+        segmentationServerClient,
+    ) {
         ArDetectionPipeline(
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
+            segmentationServerClient = segmentationServerClient,
             onTranslationInfoChanged = { info ->
                 translationText = formatTranslationOverlayText(
                     orientationName = info.translationVariant.name,
