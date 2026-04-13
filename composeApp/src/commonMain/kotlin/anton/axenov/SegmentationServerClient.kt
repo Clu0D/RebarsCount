@@ -26,7 +26,7 @@ class SegmentationServerClient(
      *
      * @return health response.
      */
-    suspend fun requestHealth(): ServerHealthResponseDto {
+    suspend fun requestHealth(): ServerHealthResponse {
         return httpClient
             .get("$normalizedBaseUrl/health")
             .body()
@@ -38,7 +38,7 @@ class SegmentationServerClient(
      * @param payload serializable snapshot payload.
      * @return upload response.
      */
-    suspend fun uploadSnapshot(payload: ZoneSnapshotUploadDto): SnapshotUploadResponseDto {
+    suspend fun uploadSnapshot(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
         return httpClient
             .post("$normalizedBaseUrl/snapshots") {
                 contentType(ContentType.Application.Json)
@@ -52,7 +52,7 @@ class SegmentationServerClient(
      *
      * @return current statuses for known zones.
      */
-    suspend fun fetchZoneStatuses(): List<ZoneStatusDto> {
+    suspend fun fetchZoneStatuses(): List<ZoneStatus> {
         return httpClient
             .get("$normalizedBaseUrl/zone-statuses")
             .body()

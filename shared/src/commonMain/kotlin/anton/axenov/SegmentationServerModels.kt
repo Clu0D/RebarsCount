@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  * @param message user-visible server message.
  */
 @Serializable
-data class ServerHealthResponseDto(
+data class ServerHealthResponse(
     val ok: Boolean,
     val message: String,
 )
@@ -23,7 +23,7 @@ data class ServerHealthResponseDto(
  * @param text user-visible zone status text.
  */
 @Serializable
-data class ZoneStatusDto(
+data class ZoneStatus(
     val zone: Long,
     val text: String,
 )
@@ -37,7 +37,7 @@ data class ZoneStatusDto(
  * @param message user-visible server message.
  */
 @Serializable
-data class SnapshotUploadResponseDto(
+data class SnapshotUploadResponse(
     val ok: Boolean,
     val zoneId: Long,
     val snapshotCount: Int,
@@ -45,20 +45,53 @@ data class SnapshotUploadResponseDto(
 )
 
 /**
- * Snapshot for one zone.
- *
- * @param zoneId requested zone identifier.
- * @param snapshotCount number of stored snapshots.
- * @param snapshots stored snapshot payloads.
- * @param text current zone status text.
+ * Bounding box from python response.
  */
 @Serializable
-data class ZoneSnapshotsResponseDto(
-    val zoneId: Long,
-    val snapshotCount: Int,
-    val snapshots: List<ZoneSnapshotUploadDto>,
-    val text: String,
+data class SegmentationBoundingBox(
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int,
 )
+
+/**
+ * Segmented object instance returned by Python service.
+ */
+@Serializable
+data class SegmentationInstance(
+    val id: Int,
+    val bbox: SegmentationBoundingBox,
+)
+
+/**
+ * Prediction payload returned by Python segmentation service.
+ *
+ * @param filename source filename echoed by Python service.
+ * @param width image width in pixels.
+ * @param height image height in pixels.
+ * @param count number of detected instances.
+ * @param instances detected object instances.
+ */
+@Serializable
+data class SegmentationPrediction(
+    val filename: String,
+    val width: Int,
+    val height: Int,
+    val count: Int,
+    val instances: List<SegmentationInstance>,
+)
+
+/**
+ * Current processing state of one stored snapshot on the Ktor server.
+ */
+@Serializable
+enum class SegmentationState {
+    QUEUED,
+    PROCESSING,
+    COMPLETED,
+    FAILED,
+}
 
 /**
  * Serializable camera pose.

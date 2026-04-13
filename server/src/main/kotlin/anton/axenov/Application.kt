@@ -3,6 +3,7 @@ package anton.axenov
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
+import io.ktor.server.application.log
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
@@ -11,17 +12,15 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.serialization.json.Json
 
-private val snapshotsByZoneId = ConcurrentHashMap<Long, CopyOnWriteArrayList<ZoneSnapshotUploadDto>>()
+private val segmentationQueue = SegmentationQueue()
 
 /**
  * Clears in-memory server state.
  */
 fun resetServerState() {
-    snapshotsByZoneId.clear()
+    segmentationQueue.clear()
 }
 
 fun main() {
@@ -32,7 +31,10 @@ fun main() {
 /**
  * Configures HTTP routes for the AR snapshot server.
  */
-fun Application.module() {
+fun Application.module(
+    predictor: SegmentationPredictor = SegmentationPredictor(),
+) {
+    segmentationQueue.configure(predictor)
     install(ContentNegotiation) {
         json(
             Json {
@@ -44,36 +46,33 @@ fun Application.module() {
 
     routing {
         get("/") {
-            call.respond(ServerHealthResponseDto(ok = true, message = "Ktor server is online"))
+            call.respond(ServerHealthResponse(ok = true, message = "Ktor server is online"))
         }
 
         get("/health") {
-            call.respond(ServerHealthResponseDto(ok = true, message = "Ktor server is online"))
+            call.respond(ServerHealthResponse(ok = true, message = "Ktor server is online"))
         }
 
         post("/snapshots") {
             val payload = call.receive<ZoneSnapshotUploadDto>()
-            val zoneSnapshots = snapshotsByZoneId.getOrPut(payload.zone.id) { CopyOnWriteArrayList() }
-            zoneSnapshots += payload
+            val snapshotCount = segmentationQueue.addSnapshot(payload)
             call.respond(
-                SnapshotUploadResponseDto(
+                SnapshotUploadResponse(
                     ok = true,
                     zoneId = payload.zone.id,
-                    snapshotCount = zoneSnapshots.size,
-                    message = "stored snapshot for zone ${payload.zone.id}",
+                    snapshotCount = snapshotCount,
+                    message = "stored snapshot for zone ${payload.zone.id} and queued segmentation",
                 ),
             )
         }
 
         get("/zone-statuses") {
-            val knownZoneIds = snapshotsByZoneId.keys.toSortedSet()
-            val statuses = knownZoneIds.map { zoneId ->
-                ZoneStatusDto(
-                    zone = zoneId,
-                    text = "${snapshotsByZoneId[zoneId]?.size ?: 0} snapshot(s) uploaded",
-                )
-            }
-            call.respond(statuses)
+            call.respond(segmentationQueue.getZoneStatuses())
         }
+    }
+
+    monitor.subscribe(io.ktor.server.application.ApplicationStopped) {
+        log.info("Stopping segmentation queue")
+        segmentationQueue.stop()
     }
 }
