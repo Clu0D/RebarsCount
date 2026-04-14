@@ -53,7 +53,12 @@ data class SegmentationBoundingBox(
     val y: Int,
     val width: Int,
     val height: Int,
-)
+) {
+    val centerPoint = ImagePoint(
+        x = x + width / 2,
+        y = y + height / 2,
+    )
+}
 
 /**
  * Segmented object instance returned by Python service.

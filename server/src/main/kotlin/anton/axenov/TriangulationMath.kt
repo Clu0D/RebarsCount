@@ -31,14 +31,14 @@ class TriangulationMath {
      * @param F fundamental matrix between frames.
      * @param points2 candidate points from the second image.
      * @param epsilonPx maximal distance in pixels from the epipolar line.
-     * @return set of all points from the second image that satisfy the epipolar constraint.
+     * @return set of all points index from the second image that satisfy the epipolar constraint.
      */
     fun candidatesNearEpipolarLine(
         p1: ImagePoint,
         F: Mat,
         points2: List<ImagePoint>,
         epsilonPx: Double,
-    ): Set<ImagePoint> {
+    ): Set<Int> {
         val pts1 = MatOfPoint2f(Point(p1.x.toDouble(), p1.y.toDouble()))
         val lines2 = Mat()
         Calib3d.computeCorrespondEpilines(pts1, 1, F, lines2)
@@ -52,7 +52,8 @@ class TriangulationMath {
             return emptySet()
         }
 
-        return points2.filter { point ->
+        return points2.indices.filter { index ->
+            val point = points2[index]
             abs(a * point.x.toDouble() + b * point.y.toDouble() + c) / denom <= epsilonPx
         }.toSet()
     }
@@ -73,9 +74,9 @@ class TriangulationMath {
         firstImagePoints: List<ImagePoint>,
         secondImagePoints: List<ImagePoint>,
         epsilonPx: Double,
-    ): Map<ImagePoint, Set<ImagePoint>> {
+    ): List<Set<Int>> {
         val fundamentalMatrix = buildFundamentalMatrix(firstSnapshot, secondSnapshot)
-        return firstImagePoints.associateWith { firstImagePoint ->
+        return firstImagePoints.map { firstImagePoint ->
             candidatesNearEpipolarLine(
                 p1 = firstImagePoint,
                 F = fundamentalMatrix,

@@ -19,6 +19,7 @@ class SegmentationQueue(
     private val workerCount: Int = DEFAULT_SEGMENTATION_WORKER_COUNT,
 ) {
     private val snapshotsByZoneId = ConcurrentHashMap<Long, CopyOnWriteArrayList<StoredSnapshotRecord>>()
+    private val zoneTriangulationManagersByZoneId = ConcurrentHashMap<Long, ZoneTriangulationManager>()
     private var predictor = SegmentationPredictor()
     private var queue = Channel<QueuedSegmentationTask>(Channel.UNLIMITED)
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -40,6 +41,7 @@ class SegmentationQueue(
      */
     fun clear() {
         snapshotsByZoneId.clear()
+        zoneTriangulationManagersByZoneId.clear()
         restartWorkers()
     }
 
@@ -64,6 +66,7 @@ class SegmentationQueue(
      */
     fun addSnapshot(payload: ZoneSnapshotUploadDto): Int {
         val zoneSnapshots = snapshotsByZoneId.getOrPut(payload.zone.id) { CopyOnWriteArrayList() }
+        zoneTriangulationManagersByZoneId.getOrPut(payload.zone.id) { ZoneTriangulationManager() }
         val record = StoredSnapshotRecord(payload)
         zoneSnapshots += record
         queue.trySend(
@@ -127,6 +130,14 @@ class SegmentationQueue(
                     }.onSuccess { prediction ->
                         record.segmentationState = SegmentationState.COMPLETED
                         record.segmentationResult = prediction
+                        zoneTriangulationManagersByZoneId[task.zoneId]?.let { zoneTriangulationManager ->
+                            synchronized(zoneTriangulationManager) {
+                                zoneTriangulationManager.addSegmentationResult(
+                                    frameSnapshot = record.snapshot.frameSnapshot,
+                                    prediction = prediction,
+                                )
+                            }
+                        }
                     }.onFailure { error ->
                         record.segmentationState = SegmentationState.FAILED
                         record.segmentationError = error.message ?: error.javaClass.simpleName
