@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -27,7 +28,16 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotest.assertions.core)
         }
+        jvmTest.dependencies {
+            implementation(libs.kotest.runner.junit5)
+            implementation(libs.kotest.assertions.core)
+            implementation(libs.mockk)
+        }
     }
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
 }
 
 android {
