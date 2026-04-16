@@ -33,16 +33,31 @@ class SegmentationServerClient(
     }
 
     /**
-     * Uploads one stored zone snapshot.
+     * Requests points prediction.
      *
      * @param payload serializable snapshot payload.
      * @return upload response.
      */
-    suspend fun uploadSnapshot(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
+    suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
         return httpClient
-            .post("$normalizedBaseUrl/snapshots") {
+            .post("$normalizedBaseUrl/predict_points") {
                 contentType(ContentType.Application.Json)
                 setBody(payload)
+            }
+            .body()
+    }
+
+    /**
+     * Requests zones prediction.
+     *
+     * @param frameSnapshot screenshot payload to analyze.
+     * @return detected interest zones.
+     */
+    suspend fun predictZones(frameSnapshot: DetectionFrameSnapshotDto): SegmentationPrediction {
+        return httpClient
+            .post("$normalizedBaseUrl/predict_zones") {
+                contentType(ContentType.Application.Json)
+                setBody(frameSnapshot)
             }
             .body()
     }

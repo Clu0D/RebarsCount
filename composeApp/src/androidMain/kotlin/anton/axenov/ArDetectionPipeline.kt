@@ -34,7 +34,7 @@ class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val segmentationServerClient: SegmentationServerClient,
-    private val zoneDetector: DetectInterestZones = DetectInterestZones(),
+    private val zoneDetector: DetectInterestZones = DetectInterestZones(segmentationServerClient),
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
     private val onUploadQueueInfoChanged: (String) -> Unit = {},
@@ -230,9 +230,7 @@ class ArDetectionPipeline(
                                 viewHeight = activeSceneView.height,
                             ),
                         )
-                        val detectedZones = zoneDetector.detectZones(
-                            screenshot = snapshot.screenshot
-                        )
+                        val detectedZones = zoneDetector.detectZones(snapshot)
                         withContext(Dispatchers.Main.immediate) {
                             if (detectedZones.isEmpty()) {
                                 reportStatus("No interest zones detected", false)

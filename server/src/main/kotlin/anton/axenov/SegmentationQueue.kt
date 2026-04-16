@@ -126,6 +126,7 @@ class SegmentationQueue(
                         predictor.predict(
                             imageBytes = record.snapshot.frameSnapshot.screenshotPngBytes,
                             filename = filename,
+                            zonePrediction = false,
                         )
                     }.onSuccess { prediction ->
                         record.segmentationState = SegmentationState.COMPLETED

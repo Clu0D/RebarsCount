@@ -42,9 +42,14 @@ class SegmentationPredictor(
     suspend fun predict(
         imageBytes: ByteArray,
         filename: String,
+        zonePrediction:Boolean,
     ): SegmentationPrediction {
+        val url = if (zonePrediction)
+            "$baseUrl/predict_zones"
+        else
+            "$baseUrl/predict_points"
         val response = httpClient.submitFormWithBinaryData(
-            url = "$baseUrl/predict",
+            url = url,
             formData = formData {
                 append(
                     key = "file",

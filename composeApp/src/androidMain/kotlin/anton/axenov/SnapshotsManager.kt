@@ -182,7 +182,7 @@ data class ZoneSnapshot(
     }
 }
 
-private fun DetectionFrameSnapshot.toPayload(): DetectionFrameSnapshotDto {
+fun DetectionFrameSnapshot.toPayload(): DetectionFrameSnapshotDto {
     return DetectionFrameSnapshotDto(
         screenshotPngBytes = screenshot.toPngByteArray(),
         frameTimestamp = frameTimestamp,
@@ -209,7 +209,7 @@ private fun DetectionFrameSnapshot.toPayload(): DetectionFrameSnapshotDto {
     )
 }
 
-private fun Bitmap.toPngByteArray(): ByteArray {
+fun Bitmap.toPngByteArray(): ByteArray {
     val outputStream = ByteArrayOutputStream()
     compress(Bitmap.CompressFormat.PNG, 100, outputStream)
     return outputStream.toByteArray()

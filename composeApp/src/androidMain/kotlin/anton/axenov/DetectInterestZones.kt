@@ -1,67 +1,41 @@
 package anton.axenov
 
-import android.graphics.Bitmap
-import kotlin.math.roundToInt
-import kotlin.random.Random
 
 /**
  * Detects zones of interest on a screenshot.
  *
- * This is a dummy implementation that returns exactly one random polygon.
- *
- * @param random random source used for deterministic tests when needed.
+ * @param segmentationServerClient client used to request server-side zone prediction.
  */
 class DetectInterestZones(
-    private val random: Random = Random.Default,
+    private val segmentationServerClient: SegmentationServerClient,
 ) {
     /**
      * Detects zones of interest on a screenshot.
      *
-     * @param screenshot screenshot captured from camera frame.
-     * @return list with one random zone polygon.
+     * @param snapshot snapshot captured from camera frame.
+     * @return list of detected zone bounding boxes.
      */
-    fun detectZones(
-        screenshot: Bitmap
-    ): List<DetectedInterestZone> {
-        val width = screenshot.width
-        val height = screenshot.height
+    suspend fun detectZones(snapshot: DetectionFrameSnapshot): List<DetectedInterestZone> {
+        val width = snapshot.imageWidth
+        val height = snapshot.imageHeight
         if (width <= 1 || height <= 1) {
             return emptyList()
         }
 
-        val boxWidth = (width * random.nextFloat(DETECTION_BOX_MIN_RATIO, DETECTION_BOX_MAX_RATIO))
-            .roundToInt()
-            .coerceAtLeast(1)
-        val boxHeight = (height * random.nextFloat(DETECTION_BOX_MIN_RATIO, DETECTION_BOX_MAX_RATIO))
-            .roundToInt()
-            .coerceAtLeast(1)
-        val left = random.nextInt(0, (width - boxWidth).coerceAtLeast(1))
-        val top = random.nextInt(0, (height - boxHeight).coerceAtLeast(1))
-        val right = (left + boxWidth).coerceAtMost(width - 1)
-        val bottom = (top + boxHeight).coerceAtMost(height - 1)
-        return listOf(
-            DetectedInterestZone(
-                screenBoundingBox = ScreenBoundingBox(
-                    left = left,
-                    top = top,
-                    right = right,
-                    bottom = bottom,
-                ),
-            ),
-        )
+        val response = segmentationServerClient.predictZones(snapshot.toPayload())
+        return response.instances.mapNotNull { instance ->
+            val box = instance.bbox
+            val clampedBox = ScreenBoundingBox(
+                left = box.x.coerceIn(0, width - 1),
+                top = box.y.coerceIn(0, height - 1),
+                right = (box.x + box.width).coerceIn(0, width - 1),
+                bottom = (box.y + box.height).coerceIn(0, height - 1),
+            )
+            if (clampedBox.left >= clampedBox.right || clampedBox.top >= clampedBox.bottom) {
+                null
+            } else {
+                DetectedInterestZone(screenBoundingBox = clampedBox)
+            }
+        }
     }
 }
-
-/**
- * Returns a random float inside inclusive range.
- *
- * @param start inclusive start value.
- * @param end inclusive end value.
- * @return random float between start and end.
- */
-private fun Random.nextFloat(start: Float, end: Float): Float {
-    return start + nextFloat() * (end - start)
-}
-
-private const val DETECTION_BOX_MIN_RATIO = 0.15f
-private const val DETECTION_BOX_MAX_RATIO = 0.35f

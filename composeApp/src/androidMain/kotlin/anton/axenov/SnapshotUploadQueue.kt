@@ -45,7 +45,7 @@ class SnapshotUploadQueue(
                     activeUploadCount.incrementAndGet()
                     publishQueueInfo()
                     try {
-                        segmentationServerClient.uploadSnapshot(task.payload)
+                        segmentationServerClient.predictPoints(task.payload)
                     } catch (error: Exception) {
                         onUploadFailure(task.zoneId, error)
                     } finally {

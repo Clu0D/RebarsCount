@@ -53,7 +53,7 @@ fun Application.module(
             call.respond(ServerHealthResponse(ok = true, message = "Ktor server is online"))
         }
 
-        post("/snapshots") {
+        post("/predict_points") {
             val payload = call.receive<ZoneSnapshotUploadDto>()
             val snapshotCount = segmentationQueue.addSnapshot(payload)
             call.respond(
@@ -64,6 +64,16 @@ fun Application.module(
                     message = "stored snapshot for zone ${payload.zone.id} and queued segmentation",
                 ),
             )
+        }
+
+        post("/predict_zones") {
+            val payload = call.receive<DetectionFrameSnapshotDto>()
+            val prediction = predictor.predict(
+                imageBytes = payload.screenshotPngBytes,
+                filename = "zones-seg-${payload.frameTimestamp}.png",
+                zonePrediction = true
+            )
+            call.respond(prediction)
         }
 
         get("/zone-statuses") {
