@@ -31,7 +31,7 @@ class ZonesManager(
     fun addZones(newZones: List<Zone>) {
         newZones.forEach { newZone ->
             val mergeResult = mergeZoneWithIntersectingZones(newZone)
-            val mergedZone = mergeResult.zone
+            val mergedZone = mergeResult.zone ?: return@forEach
             zones += mergedZone
             onZoneAddition(mergedZone)
             mergeDebugInfo += "${mergeResult.intersectingZonesCount}: ${mergeResult.maxOverlapPercent}"
@@ -210,6 +210,16 @@ class ZonesManager(
      */
     private fun mergeZoneWithIntersectingZones(newZone: Zone): ZoneMergeResult {
         val overlaps = findZoneOverlaps(newZone)
+        val intersectsPlacedZone = overlaps.any { (storedZone, overlap) ->
+            storedZone.isPlaced && overlap >= BOX_INTERSECTION_THRESHOLD
+        }
+        if (intersectsPlacedZone) {
+            return ZoneMergeResult(
+                zone = null,
+                intersectingZonesCount = 0,
+                maxOverlapPercent = 0f,
+            )
+        }
         val intersectingOverlaps = overlaps
             .filter { (_, overlap) -> overlap >= BOX_INTERSECTION_THRESHOLD }
         val intersectingZones = intersectingOverlaps.map { (storedZone, _) -> storedZone }
@@ -275,7 +285,7 @@ class ZonesManager(
  * @param maxOverlapPercent merge statistics.
  */
 private data class ZoneMergeResult(
-    val zone: Zone,
+    val zone: Zone?,
     val intersectingZonesCount: Int,
     val maxOverlapPercent: Float,
 )
