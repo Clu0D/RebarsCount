@@ -4,18 +4,18 @@ import korlibs.math.geom.Vector3F
 import kotlin.math.roundToInt
 
 /**
- * Computes 2D convex hull for world-space points known to be on one plane.
+ * Projects world-space points to a 2D coordinate system local to [planePose].
  *
  * @param worldPoints points on a common plane.
  * @param planePose plane used for local 2D basis.
- * @return hull vertices in counterclockwise order in world coordinates.
+ * @return plane-local points.
  */
-fun buildConvexHullOnPlane(
+fun projectWorldPointsToPlaneCoordinates(
     worldPoints: List<Vector3F>,
     planePose: PlanePose,
-): List<Vector3F> {
+): List<HullPoint2d> {
     if (worldPoints.size <= 1) {
-        return worldPoints
+        return emptyList()
     }
     val normal = planePose.normal.normalized()
     val helperAxis = if (kotlin.math.abs(normal.y) < 0.99f) {
@@ -26,7 +26,7 @@ fun buildConvexHullOnPlane(
     val axisX = normal.cross(helperAxis).normalized()
     val axisY = normal.cross(axisX).normalized()
 
-    val points2d = worldPoints.map { point ->
+    return worldPoints.map { point ->
         val fromOrigin = point - planePose.center
         HullPoint2d(
             x = fromOrigin.dot(axisX),
@@ -36,6 +36,26 @@ fun buildConvexHullOnPlane(
     }.distinctBy { point ->
         "${point.x.roundToHullPrecision()}|${point.y.roundToHullPrecision()}"
     }
+}
+
+/**
+ * Computes 2D convex hull for world-space points known to be on one plane.
+ *
+ * @param worldPoints points on a common plane.
+ * @param planePose plane used for local 2D basis.
+ * @return hull vertices in world coordinates.
+ */
+fun buildConvexHullOnPlane(
+    worldPoints: List<Vector3F>,
+    planePose: PlanePose,
+): List<Vector3F> {
+    if (worldPoints.size <= 1) {
+        return worldPoints
+    }
+    val points2d = projectWorldPointsToPlaneCoordinates(
+        worldPoints = worldPoints,
+        planePose = planePose,
+    )
     if (points2d.size <= 2) {
         return points2d.map { it.worldPoint }
     }
@@ -94,7 +114,7 @@ private fun Float.roundToHullPrecision(): Int {
  * @param y plane-local Y coordinate.
  * @param worldPoint original world-space point.
  */
-private data class HullPoint2d(
+data class HullPoint2d(
     val x: Float,
     val y: Float,
     val worldPoint: Vector3F,
