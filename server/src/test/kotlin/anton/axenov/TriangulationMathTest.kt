@@ -34,8 +34,8 @@ class TriangulationMathTest {
         )
 
         candidates shouldBe setOf(
-            ImagePoint(100, 20),
-            ImagePoint(150, 21),
+            0,
+            1,
         )
     }
 
@@ -64,11 +64,8 @@ class TriangulationMathTest {
             epsilonPx = 0.5,
         )
 
-        result shouldBe mapOf(
-            firstImagePoint to setOf(
-                ImagePoint(120, 240),
-                ImagePoint(520, 240),
-            ),
+        result shouldBe listOf(
+            setOf(0, 1),
         )
     }
 }
