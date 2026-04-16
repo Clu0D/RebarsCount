@@ -228,7 +228,7 @@ data class Zone(
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
     val projectionInputs: List<ZoneProjectionInput> = emptyList(),
-    val isPlaced: Boolean = true,
+    var isPlaced: Boolean = false,
 ) {
     var metricsLabelText: String = "Metrics: waiting"
     var serverLabelText: String? = null

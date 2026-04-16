@@ -235,13 +235,17 @@ class ZonesManager(
             cameraPosition = cameraPosition,
             minPointCount = MERGE_PLANE_MIN_POINT_COUNT,
         ).pose ?: newZone.planePose
+        val mergedZone = Zone(
+            sampledPoints = mergedSampledPoints,
+            planePose = mergedPlanePose,
+            projectionInputs = mergedProjectionInputs,
+        )
+        mergedZone.isPlaced = shouldMergedZoneBePlaced(
+            mergedZone = mergedZone,
+            sourceZones = zonesToMerge,
+        )
         return ZoneMergeResult(
-            zone = Zone(
-                sampledPoints = mergedSampledPoints,
-                planePose = mergedPlanePose,
-                projectionInputs = mergedProjectionInputs,
-                isPlaced = true,
-            ),
+            zone = mergedZone,
             intersectingZonesCount = removedZones.size,
             maxOverlapPercent = maxOverlapPercent,
         )
