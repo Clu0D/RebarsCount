@@ -1,5 +1,7 @@
 package anton.axenov
 
+import korlibs.math.geom.Vector3F
+
 /**
  * Segmentation with all representative points derived from its instances.
  *
@@ -37,6 +39,17 @@ data class ZoneTriangulationPoint(
 }
 
 /**
+ * Triangulated world-space point derived from corresponding 2D segmentation points.
+ *
+ * @param position reconstructed 3D point in world coordinates.
+ * @param parentPoints source 2D points that were used to reconstruct this world point.
+ */
+data class WorldPoint(
+    val position: Vector3F,
+    val parentPoints: Set<ZoneTriangulationPoint>,
+)
+
+/**
  * Manages triangulation candidates for all segmentation points of one zone.
  *
  * @param triangulationMath math helper used to find point correspondences between frames.
@@ -48,6 +61,7 @@ class ZoneTriangulationManager(
 ) {
 
     private val segmentationResults = mutableListOf<ZoneSegmentation>()
+    val worldPoints = mutableListOf<WorldPoint>()
 
     /**
      * Adds one segmentation result for the zone and creates candidate sets for all of its points.
@@ -86,15 +100,38 @@ class ZoneTriangulationManager(
     ) {
         val correspondence = triangulationMath.correspondenceCandidates(
             firstSnapshot = segmentation.frameSnapshot,
-            secondSnapshot = segmentation.frameSnapshot,
+            secondSnapshot = anotherSegmentation.frameSnapshot,
             firstImagePoints = segmentation.points.map { it.imagePoint },
             secondImagePoints = anotherSegmentation.points.map { it.imagePoint },
             epsilonPx = epsilonPx,
         )
-        segmentation.points.mapIndexed { index, point ->
-            point.candidatesBySegmentation.put(
-                anotherSegmentation,
-                correspondence[index].map { anotherSegmentation.points[it] }.toSet()
+        segmentation.points.forEachIndexed { index, point ->
+            val candidatePoints = correspondence[index].map { anotherSegmentation.points[it] }.toSet()
+            point.candidatesBySegmentation[anotherSegmentation] = candidatePoints
+            addWorldPointsForCandidates(point, candidatePoints)
+        }
+    }
+
+    /**
+     * Triangulates all candidate pairs for one newly added point.
+     *
+     * @param point point from the newly added segmentation.
+     * @param candidatePoints candidate corresponding points from another segmentation.
+     */
+    private fun addWorldPointsForCandidates(
+        point: ZoneTriangulationPoint,
+        candidatePoints: Set<ZoneTriangulationPoint>,
+    ) {
+        candidatePoints.forEach { candidatePoint ->
+            val worldPosition = triangulationMath.triangulateWorldPoint(
+                firstSnapshot = point.segmentation.frameSnapshot,
+                secondSnapshot = candidatePoint.segmentation.frameSnapshot,
+                firstImagePoint = point.imagePoint,
+                secondImagePoint = candidatePoint.imagePoint,
+            ) ?: return@forEach
+            worldPoints += WorldPoint(
+                position = worldPosition,
+                parentPoints = setOf(point, candidatePoint),
             )
         }
     }
