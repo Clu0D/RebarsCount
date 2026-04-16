@@ -6,7 +6,6 @@ import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.UseSerializers
@@ -220,6 +219,7 @@ class ZoneProjectionInput(
  * @param sampledPoints sampled world points used to estimate infinite plane.
  * @param planePose mathematical parameters of fitted infinite plane.
  * @param projectionInputs all original projection payloads used to build source polygons.
+ * @param insignificantChanges number of last changes that are small enough to place a zone.
  * @param isPlaced true when the zone has been placed in the world and can be used for segmentation.
  */
 @Serializable
@@ -228,10 +228,12 @@ data class Zone(
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
     val projectionInputs: List<ZoneProjectionInput> = emptyList(),
-    var isPlaced: Boolean = false,
+    var insignificantChanges: Int = 0,
 ) {
     var metricsLabelText: String = "Metrics: waiting"
     var serverLabelText: String? = null
+
+    val isPlaced: Boolean = insignificantChanges > INSIGNIFICANT_CHANGES_BEFORE_PLACE_ZONE
 
     /**
      * Current text shown in the zone label in AR scene.
@@ -471,6 +473,7 @@ object DepthSnapshotSerializer : KSerializer<DepthSnapshot> {
     }
 }
 
+private const val INSIGNIFICANT_CHANGES_BEFORE_PLACE_ZONE = 3
 private const val BOUNDING_BOX_PADDING_RATIO = 0.1f
 private const val MIN_PADDING_METERS = 0.05f
 private const val MIN_BOX_VOLUME_EPSILON = 1e-8f

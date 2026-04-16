@@ -89,7 +89,6 @@ fun placeZoneInWorld(
         sampledPoints = filteredWorldPoints,
         planePose = fittedPlanePose,
         projectionInputs = listOf(projectionInput),
-        isPlaced = false,
     )
     return ZonePlacementResult(
         zone = zone,

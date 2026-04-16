@@ -12,7 +12,7 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param sourceZones zones that participated in the merge.
  * @return true when the merged polygon remains close to every source polygon.
  */
-internal fun shouldMergedZoneBePlaced(
+internal fun wasZoneChangeInsignificant(
     mergedZone: Zone,
     sourceZones: List<Zone>,
 ): Boolean {

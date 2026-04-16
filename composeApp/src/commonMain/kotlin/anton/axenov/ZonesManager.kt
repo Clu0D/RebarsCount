@@ -240,10 +240,8 @@ class ZonesManager(
             planePose = mergedPlanePose,
             projectionInputs = mergedProjectionInputs,
         )
-        mergedZone.isPlaced = shouldMergedZoneBePlaced(
-            mergedZone = mergedZone,
-            sourceZones = zonesToMerge,
-        )
+        if (wasZoneChangeInsignificant(mergedZone, zonesToMerge))
+            mergedZone.insignificantChanges++
         return ZoneMergeResult(
             zone = mergedZone,
             intersectingZonesCount = removedZones.size,
