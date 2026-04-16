@@ -220,6 +220,7 @@ class ZoneProjectionInput(
  * @param sampledPoints sampled world points used to estimate infinite plane.
  * @param planePose mathematical parameters of fitted infinite plane.
  * @param projectionInputs all original projection payloads used to build source polygons.
+ * @param isPlaced true when the zone has been placed in the world and can be used for segmentation.
  */
 @Serializable
 data class Zone(
@@ -227,6 +228,7 @@ data class Zone(
     val sampledPoints: List<Vector3>,
     val planePose: PlanePose,
     val projectionInputs: List<ZoneProjectionInput> = emptyList(),
+    val isPlaced: Boolean = true,
 ) {
     var metricsLabelText: String = "Metrics: waiting"
     var serverLabelText: String? = null

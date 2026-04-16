@@ -194,6 +194,13 @@ class ZonesManager(
     fun getZones(): List<Zone> = zones.toList()
 
     /**
+     * Returns immutable snapshot of all zones that are already placed in the world.
+     *
+     * @return placed zones in insertion order.
+     */
+    fun getPlacedZones(): List<Zone> = zones.filter { zone -> zone.isPlaced }
+
+    /**
      * Merges one newly added zone with all intersecting already stored zones.
      *
      * Intersecting zones are removed from storage and queued for scene removal.
@@ -233,6 +240,7 @@ class ZonesManager(
                 sampledPoints = mergedSampledPoints,
                 planePose = mergedPlanePose,
                 projectionInputs = mergedProjectionInputs,
+                isPlaced = true,
             ),
             intersectingZonesCount = removedZones.size,
             maxOverlapPercent = maxOverlapPercent,

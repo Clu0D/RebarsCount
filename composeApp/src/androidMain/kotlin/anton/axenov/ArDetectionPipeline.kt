@@ -356,6 +356,10 @@ class ArDetectionPipeline(
      * @param snapshot newly persisted snapshot.
      */
     private fun onZoneSnapshotStored(zone: Zone, snapshot: ZoneSnapshot) {
+        if (!zone.isPlaced) {
+            reportStatus("Skipping points segmentation for unplaced zone ${zone.id}", false)
+            return
+        }
         if (!isSceneActive.get()) {
             return
         }
@@ -403,7 +407,7 @@ class ArDetectionPipeline(
         screenHeight: Int,
         worldPointProjector: (Vector3) -> ViewPoint?,
     ) {
-        val zones = zonesManager.getZones()
+        val zones = zonesManager.getPlacedZones()
         if (zones.isEmpty()) {
             return
         }
