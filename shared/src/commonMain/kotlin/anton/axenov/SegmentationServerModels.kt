@@ -49,12 +49,14 @@ data class SnapshotUploadResponse(
  *
  * @param zoneId zone that owns this reconstructed point.
  * @param position point position in world coordinates.
+ * @param confidence point confidence in range `[0, 1]`.
  */
 @Serializable
 data class ServerWorldPointDto(
     val zoneId: Long,
     @Serializable(with = Vector3Serializer::class)
     val position: Vector3F,
+    val confidence: Float
 )
 
 /**
@@ -75,11 +77,16 @@ data class SegmentationBoundingBox(
 
 /**
  * Segmented object instance returned by Python service.
+ *
+ * @param id instance identifier inside one prediction response.
+ * @param bbox detected object bounding box.
+ * @param confidence model confidence in range `[0, 1]`.
  */
 @Serializable
 data class SegmentationInstance(
     val id: Int,
     val bbox: SegmentationBoundingBox,
+    val confidence: Float,
 )
 
 /**

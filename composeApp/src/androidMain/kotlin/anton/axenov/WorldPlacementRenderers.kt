@@ -1,11 +1,11 @@
 package anton.axenov
 
+import androidx.compose.ui.graphics.Color
 import com.google.ar.core.Anchor
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
-import io.github.sceneview.math.Color
 import io.github.sceneview.node.CubeNode
 import kotlin.math.max
 import korlibs.math.geom.Quaternion as Quaternion
@@ -116,15 +116,33 @@ fun createWorldPointMarkerNodes(
  */
 fun createServerWorldPointMarkerNodes(
     sceneView: ARSceneView,
-    worldPoints: List<Vector3>,
+    worldPoints: List<ServerWorldPointDto>,
 ): List<AnchorNode> {
     val session = sceneView.session ?: return emptyList()
-    val materialInstance = sceneView.materialLoader.createColorInstance(
-        Color(0.1f, 0.9f, 0.2f, 1f),
-    )
     return worldPoints.map { worldPoint ->
-        val anchor = session.createAnchor(Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z))
-        createWorldPointMarkerAnchorNode(sceneView, anchor, SERVER_POINT_MARKER_SIZE_METERS, materialInstance)
+        val confidence = worldPoint.confidence.coerceIn(0f, 1f)
+        val materialInstance = sceneView.materialLoader.createColorInstance(
+            Color(
+                1f - confidence,
+                0f,
+                confidence,
+                1f,
+            ),
+        )
+        val anchor = session.createAnchor(
+            Pose.makeTranslation(
+                worldPoint.position.x,
+                worldPoint.position.y,
+                worldPoint.position.z,
+            ),
+        )
+        createWorldPointMarkerAnchorNode(
+            sceneView = sceneView,
+            anchor = anchor,
+            markerSizeMeters = SERVER_POINT_MARKER_MIN_SIZE_METERS +
+                    (SERVER_POINT_MARKER_MAX_SIZE_METERS - SERVER_POINT_MARKER_MIN_SIZE_METERS) * confidence,
+            materialInstance = materialInstance,
+        )
     }
 }
 
@@ -198,7 +216,6 @@ private fun createWorldPointMarkerAnchorNode(
     sceneView.addChildNode(anchorNode)
     return anchorNode
 }
-
 
 /**
  * Draws zone 3D bounding box as thin blue wireframe edges.
@@ -291,7 +308,8 @@ private fun createEdgeAnchorNode(
 }
 
 private const val POINT_MARKER_SIZE_METERS = 0.005f
-private const val SERVER_POINT_MARKER_SIZE_METERS = 0.012f
+private const val SERVER_POINT_MARKER_MIN_SIZE_METERS = 0.006f
+private const val SERVER_POINT_MARKER_MAX_SIZE_METERS = 0.02f
 private const val LINE_THICKNESS_FACTOR = 0.02f
 private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f

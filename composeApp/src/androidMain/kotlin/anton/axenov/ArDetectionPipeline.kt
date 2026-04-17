@@ -516,7 +516,7 @@ class ArDetectionPipeline(
         val activeSceneView = sceneView ?: return
         renderedServerWorldPointNodes += createServerWorldPointMarkerNodes(
             sceneView = activeSceneView,
-            worldPoints = worldPoints.map { worldPoint -> worldPoint.position },
+            worldPoints = worldPoints,
         )
     }
 

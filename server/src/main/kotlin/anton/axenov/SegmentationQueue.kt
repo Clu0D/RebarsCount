@@ -16,10 +16,12 @@ import korlibs.math.geom.Vector3F
  *
  * @param position reconstructed 3D point in world coordinates.
  * @param parentPoints source 2D points that were used to reconstruct this world point.
+ * @param confidence reconstruction confidence in range `[0, 1]`.
  */
 data class WorldPoint(
     val position: Vector3F,
     val parentPoints: Set<ZoneTriangulationPoint>,
+    val confidence: Float,
 )
 
 /**
@@ -125,6 +127,7 @@ class SegmentationQueue(
                             ServerWorldPointDto(
                                 zoneId = zoneId,
                                 position = worldPoint.position,
+                                confidence = worldPoint.confidence,
                             )
                         }
                 }
