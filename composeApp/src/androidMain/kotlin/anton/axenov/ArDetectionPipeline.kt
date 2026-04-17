@@ -372,7 +372,7 @@ class ArDetectionPipeline(
      * @param snapshot newly persisted snapshot.
      */
     private fun onZoneSnapshotStored(zone: Zone, snapshot: ZoneSnapshot) {
-        if (!zone.isPlaced) {
+        if (!zone.isPlaced()) {
             reportStatus("Skipping points segmentation for unplaced zone ${zone.id}", false)
             return
         }

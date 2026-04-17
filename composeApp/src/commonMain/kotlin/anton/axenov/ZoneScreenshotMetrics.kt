@@ -78,9 +78,12 @@ fun buildZoneMetricsText(
         screenHeight = screenHeight,
         worldPointProjector = worldPointProjector,
     )
-    val mergeText = (zone.mergeLabelText ?: "no merge") + " insignificantChanges=${zone.insignificantChanges}"
+    val mergeText = if (zone.isPlaced())
+        "placed"
+    else
+        (zone.mergeLabelText ?: "no merge") + " insignificantChanges=${zone.insignificantChanges}"
 
-    return "id=${zone.id}, ang=${captureAngle.angleDegrees.toPrecision(1)}deg, " +
+    return "id=${zone.id}, \nang=${captureAngle.angleDegrees.toPrecision(1)}deg, " +
             "dot=${captureAngle.normalToCameraDot.toPrecision(2)}\n" +
             "dir2d=(${captureAngle.planarDirectionX.toPrecision(2)}," +
             "${captureAngle.planarDirectionY.toPrecision(2)}) " +

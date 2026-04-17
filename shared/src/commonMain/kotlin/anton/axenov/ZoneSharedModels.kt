@@ -220,7 +220,6 @@ class ZoneProjectionInput(
  * @param planePose mathematical parameters of fitted infinite plane.
  * @param projectionInputs all original projection payloads used to build source polygons.
  * @param insignificantChanges number of last changes that are small enough to place a zone.
- * @param isPlaced true when the zone has been placed in the world and can be used for segmentation.
  */
 @Serializable
 data class Zone(
@@ -234,7 +233,10 @@ data class Zone(
     var serverLabelText: String? = null
     var mergeLabelText: String? = null
 
-    val isPlaced: Boolean = insignificantChanges > INSIGNIFICANT_CHANGES_BEFORE_PLACE_ZONE
+    /**
+     * Is true when the zone has been placed in the world and can be used for segmentation.
+     */
+    fun isPlaced(): Boolean = insignificantChanges >= INSIGNIFICANT_CHANGES_BEFORE_PLACE_ZONE
 
     /**
      * Current text shown in the zone label in AR scene.
