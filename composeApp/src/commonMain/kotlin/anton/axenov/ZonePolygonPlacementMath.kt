@@ -13,10 +13,13 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param normalizedDifferenceRatio normalized polygon symmetric-difference ratio.
  */
 internal data class ZoneChangeInsignificanceResult(
-    val wasChangeInsignificant: Boolean,
     val planeAngleDegrees: Float?,
     val normalizedDifferenceRatio: Float?,
 ) {
+    val wasChangeInsignificant =
+        planeAngleDegrees != null && normalizedDifferenceRatio != null &&
+                planeAngleDegrees < MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES &&
+                normalizedDifferenceRatio <= MERGED_ZONE_MAX_DIFFERENCE_RATIO
     val mergeLabelText by lazy {
         "\nmerge ang=${planeAngleDegrees?.toPrecision(2) ?: "-"}deg, " +
                 "diff=${normalizedDifferenceRatio?.toPrecision(2) ?: "-"}"
@@ -35,7 +38,7 @@ internal fun wasZoneChangeInsignificant(
     sourceZones: List<Zone>,
 ): ZoneChangeInsignificanceResult {
     if (sourceZones.size < 2 || mergedZone.polygonPoints.size < 3)
-        return ZoneChangeInsignificanceResult(false, null, null)
+        return ZoneChangeInsignificanceResult(null, null)
 
     val sourceZone = sourceZones.first()
 
@@ -45,11 +48,7 @@ internal fun wasZoneChangeInsignificant(
         secondPolygon = sourceZone.polygonPoints,
         referencePlanePose = mergedZone.planePose,
     )
-    val wasChangeInsignificant = planeAngleDegrees > MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES &&
-            normalizedDifferenceRatio != null &&
-            normalizedDifferenceRatio <= MERGED_ZONE_MAX_DIFFERENCE_RATIO
-
-    return ZoneChangeInsignificanceResult(wasChangeInsignificant, planeAngleDegrees, normalizedDifferenceRatio)
+    return ZoneChangeInsignificanceResult(planeAngleDegrees, normalizedDifferenceRatio)
 }
 
 /**
@@ -85,5 +84,5 @@ internal expect fun calculateZonePolygonDifference(
     referencePlanePose: PlanePose,
 ): Float?
 
-private const val MERGED_ZONE_MAX_DIFFERENCE_RATIO = 0.1f
-private const val MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES = 15f
+private const val MERGED_ZONE_MAX_DIFFERENCE_RATIO = 0.2f
+private const val MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES = 10f
