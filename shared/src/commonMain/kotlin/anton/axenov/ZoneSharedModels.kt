@@ -232,6 +232,7 @@ data class Zone(
 ) {
     var metricsLabelText: String = "Metrics: waiting"
     var serverLabelText: String? = null
+    var mergeLabelText: String? = null
 
     val isPlaced: Boolean = insignificantChanges > INSIGNIFICANT_CHANGES_BEFORE_PLACE_ZONE
 

@@ -250,7 +250,9 @@ class ZonesManager(
             planePose = mergedPlanePose,
             projectionInputs = mergedProjectionInputs,
         )
-        if (wasZoneChangeInsignificant(mergedZone, zonesToMerge))
+        val zoneChangeInsignificance = wasZoneChangeInsignificant(mergedZone, zonesToMerge)
+        mergedZone.mergeLabelText = zoneChangeInsignificance.mergeLabelText
+        if (zoneChangeInsignificance.wasChangeInsignificant)
             mergedZone.insignificantChanges++
         return ZoneMergeResult(
             zone = mergedZone,

@@ -6,28 +6,50 @@ import kotlin.math.acos
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
+ * Merge-change evaluation result.
+ *
+ * @param wasChangeInsignificant true when merged polygon stayed close enough to source polygon.
+ * @param planeAngleDegrees angle between merged and source zone planes in degrees.
+ * @param normalizedDifferenceRatio normalized polygon symmetric-difference ratio.
+ */
+internal data class ZoneChangeInsignificanceResult(
+    val wasChangeInsignificant: Boolean,
+    val planeAngleDegrees: Float?,
+    val normalizedDifferenceRatio: Float?,
+) {
+    val mergeLabelText by lazy {
+        "\nmerge ang=${planeAngleDegrees?.toPrecision(2) ?: "-"}deg, " +
+                "diff=${normalizedDifferenceRatio?.toPrecision(2) ?: "-"}"
+    }
+}
+
+/**
  * Checks whether the merged zone polygon stays close enough to every source polygon to treat it as placed.
  *
  * @param mergedZone merged zone candidate.
  * @param sourceZones zones that participated in the merge.
- * @return true when the merged polygon remains close to every source polygon.
+ * @return is result zone close to the original zone with calculated metrics.
  */
 internal fun wasZoneChangeInsignificant(
     mergedZone: Zone,
     sourceZones: List<Zone>,
-): Boolean {
+): ZoneChangeInsignificanceResult {
     if (sourceZones.size < 2 || mergedZone.polygonPoints.size < 3)
-        return false
+        return ZoneChangeInsignificanceResult(false, null, null)
+
     val sourceZone = sourceZones.first()
 
-    if (calculateZonePlaneAngleDegrees(mergedZone, sourceZone) > MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES)
-        return false
+    val planeAngleDegrees = calculateZonePlaneAngleDegrees(mergedZone, sourceZone)
     val normalizedDifferenceRatio = calculateZonePolygonDifference(
         firstPolygon = mergedZone.polygonPoints,
         secondPolygon = sourceZone.polygonPoints,
         referencePlanePose = mergedZone.planePose,
-    ) ?: return false
-    return normalizedDifferenceRatio <= MERGED_ZONE_MAX_DIFFERENCE_RATIO
+    )
+    val wasChangeInsignificant = planeAngleDegrees > MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES &&
+            normalizedDifferenceRatio != null &&
+            normalizedDifferenceRatio <= MERGED_ZONE_MAX_DIFFERENCE_RATIO
+
+    return ZoneChangeInsignificanceResult(wasChangeInsignificant, planeAngleDegrees, normalizedDifferenceRatio)
 }
 
 /**
