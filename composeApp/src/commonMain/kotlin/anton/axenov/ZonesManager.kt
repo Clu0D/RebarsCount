@@ -30,11 +30,11 @@ class ZonesManager(
      */
     fun addZones(newZones: List<Zone>) {
         newZones.forEach { newZone ->
-            val mergeResult = mergeZoneWithIntersectingZones(newZone)
+            val mergeResult = tryMergeZones(newZone)
             val mergedZone = mergeResult.zone ?: return@forEach
             zones += mergedZone
             onZoneAddition(mergedZone)
-            mergeDebugInfo += "${mergeResult.intersectingZonesCount}: ${mergeResult.maxOverlapPercent}"
+            mergeDebugInfo += "${mergeResult.overlapZonesCount}: ${mergeResult.maxOverlapPercent}"
         }
     }
 
@@ -201,42 +201,44 @@ class ZonesManager(
     fun getPlacedZones(): List<Zone> = zones.filter { zone -> zone.isPlaced }
 
     /**
-     * Merges one newly added zone with all intersecting already stored zones.
+     * Try merging newly added zone with old ones.
      *
-     * Intersecting zones are removed from storage and queued for scene removal.
+     * Merged with stored zone with the biggest significant overlap.
+     * Old zone is removed from scene if merged.
+     * If no zones to merge new one is added to the scene.
      *
      * @param newZone newly detected zone.
-     * @return merged zone containing sampled points from all intersecting zones.
+     * @return new zone to add to the scene or null.
      */
-    private fun mergeZoneWithIntersectingZones(newZone: Zone): ZoneMergeResult {
+    private fun tryMergeZones(newZone: Zone): ZoneMergeResult {
         val overlaps = findZoneOverlaps(newZone)
-        val intersectsPlacedZone = overlaps.any { (storedZone, overlap) ->
-            storedZone.isPlaced && overlap >= BOX_INTERSECTION_THRESHOLD
-        }
-        if (intersectsPlacedZone) {
-            return ZoneMergeResult(
-                zone = null,
-                intersectingZonesCount = 0,
-                maxOverlapPercent = 0f,
-            )
-        }
-        val intersectingOverlaps = overlaps
+        val biggestOverlap = overlaps
             .filter { (_, overlap) -> overlap >= BOX_INTERSECTION_THRESHOLD }
-        val intersectingZones = intersectingOverlaps.map { (storedZone, _) -> storedZone }
-        val maxOverlapPercent = (intersectingOverlaps.maxOfOrNull { (_, overlap) -> overlap } ?: 0f) * 100f
+            .maxByOrNull { (_, overlap) -> overlap }
+        val maxOverlapPercent = ((biggestOverlap?.second) ?: 0f) * 100f
 
-        if (intersectingZones.isEmpty()) {
+        if (biggestOverlap == null) {
             return ZoneMergeResult(
                 zone = newZone,
-                intersectingZonesCount = 0,
+                overlapZonesCount = 0,
                 maxOverlapPercent = maxOverlapPercent,
             )
         }
-        val removedZones = removeZones(intersectingZones)
-        if (removedZones.isNotEmpty()) {
-            queuedZonesToRemove += removedZones
+
+        val zoneToMerge = biggestOverlap.first
+        if (zoneToMerge.isPlaced) {
+            return ZoneMergeResult(
+                zone = null,
+                overlapZonesCount = 0,
+                maxOverlapPercent = maxOverlapPercent,
+            )
         }
-        val zonesToMerge = listOf(newZone) + removedZones
+
+        val removedZones = removeZones(listOf(zoneToMerge))
+        if (removedZones.isNotEmpty())
+            queuedZonesToRemove += removedZones
+
+        val zonesToMerge = removedZones + newZone
         val mergedProjectionInputs = zonesToMerge.flatMap { zone -> zone.projectionInputs }
         val mergedSampledPoints = zonesToMerge.flatMap { zone -> zone.sampledPoints }
         val cameraPosition = mergedProjectionInputs.firstOrNull()?.cameraPosition() ?: newZone.planePose.center
@@ -252,11 +254,13 @@ class ZonesManager(
         )
         val zoneChangeInsignificance = wasZoneChangeInsignificant(mergedZone, zonesToMerge)
         mergedZone.mergeLabelText = zoneChangeInsignificance.mergeLabelText
-        if (zoneChangeInsignificance.wasChangeInsignificant)
-            mergedZone.insignificantChanges++
+        mergedZone.insignificantChanges = if (zoneChangeInsignificance.wasChangeInsignificant)
+            zoneToMerge.insignificantChanges + 1
+        else
+            0
         return ZoneMergeResult(
             zone = mergedZone,
-            intersectingZonesCount = removedZones.size,
+            overlapZonesCount = removedZones.size,
             maxOverlapPercent = maxOverlapPercent,
         )
     }
@@ -283,12 +287,12 @@ class ZonesManager(
  * One zone merge result.
  *
  * @param zone zone that should be stored after merge.
- * @param intersectingZonesCount merge statistics.
+ * @param overlapZonesCount merge statistics.
  * @param maxOverlapPercent merge statistics.
  */
 private data class ZoneMergeResult(
     val zone: Zone?,
-    val intersectingZonesCount: Int,
+    val overlapZonesCount: Int,
     val maxOverlapPercent: Float,
 )
 
