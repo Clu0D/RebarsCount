@@ -250,14 +250,14 @@ data class Zone(
             return@lazy emptyList()
         }
 
-        val projectedPoints = projectionInputs
-            .flatMap { input -> input.projectToPlane(planePose).orEmpty() }
-        if (projectedPoints.isEmpty()) {
+        val projectedPolygons = projectionInputs
+            .mapNotNull { input -> input.projectToPlane(planePose) }
+        if (projectedPolygons.isEmpty()) {
             return@lazy emptyList()
         }
 
-        buildConvexHullOnPlane(
-            worldPoints = projectedPoints,
+        buildConfidenceConvexHullOnPlane(
+            worldPoints = projectedPolygons,
             planePose = planePose,
         )
     }

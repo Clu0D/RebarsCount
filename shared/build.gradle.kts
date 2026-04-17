@@ -24,6 +24,9 @@ kotlin {
             api(libs.korlibs.math)
             implementation(libs.kotlinx.serialization.json)
         }
+        androidMain.dependencies {
+            implementation(libs.jts.core)
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotest.assertions.core)

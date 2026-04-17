@@ -5,7 +5,7 @@ import org.locationtech.jts.geom.Envelope
 import org.locationtech.jts.geom.GeometryFactory
 
 
-private val gf = GeometryFactory()
+private val zonePolygonGeometryFactory = GeometryFactory()
 
 /**
  * Calculates polygon coverage using JTS geometry operations on Android.
@@ -28,10 +28,10 @@ internal actual fun calculateScreenPolygonCoverage(
         val point = if (index == screenPolygon.size) screenPolygon.first() else screenPolygon[index]
         Coordinate(point.x.toDouble(), point.y.toDouble())
     }
-    val polygon = gf.createPolygon(coordinates)
+    val polygon = zonePolygonGeometryFactory.createPolygon(coordinates)
     val normalizedPolygon = polygon.buffer(0.0)
 
-    val screenGeometry = gf.toGeometry(
+    val screenGeometry = zonePolygonGeometryFactory.toGeometry(
         Envelope(0.0, screenWidth.toDouble(), 0.0, screenHeight.toDouble())
     )
 
