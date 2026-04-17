@@ -98,9 +98,33 @@ fun createWorldPointMarkerNodes(
     worldPoints: List<Vector3>,
 ): List<AnchorNode> {
     val session = sceneView.session ?: return emptyList()
+    val materialInstance = sceneView.materialLoader.createColorInstance(
+        Color(1f, 1f, 1f, 1f),
+    )
     return worldPoints.map { worldPoint ->
         val anchor = session.createAnchor(Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z))
-        createWorldPointMarkerAnchorNode(sceneView, anchor)
+        createWorldPointMarkerAnchorNode(sceneView, anchor, POINT_MARKER_SIZE_METERS, materialInstance)
+    }
+}
+
+/**
+ * Creates marker nodes for reconstructed world points and adds them to the scene.
+ *
+ * @param sceneView active SceneView.
+ * @param worldPoints world-space points to visualize.
+ * @return created anchor nodes, one per point.
+ */
+fun createServerWorldPointMarkerNodes(
+    sceneView: ARSceneView,
+    worldPoints: List<Vector3>,
+): List<AnchorNode> {
+    val session = sceneView.session ?: return emptyList()
+    val materialInstance = sceneView.materialLoader.createColorInstance(
+        Color(0.1f, 0.9f, 0.2f, 1f),
+    )
+    return worldPoints.map { worldPoint ->
+        val anchor = session.createAnchor(Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z))
+        createWorldPointMarkerAnchorNode(sceneView, anchor, SERVER_POINT_MARKER_SIZE_METERS, materialInstance)
     }
 }
 
@@ -157,15 +181,18 @@ fun createPolygonMarkerNodes(
 private fun createWorldPointMarkerAnchorNode(
     sceneView: ARSceneView,
     anchor: Anchor,
+    markerSizeMeters: Float,
+    materialInstance: com.google.android.filament.MaterialInstance,
 ): AnchorNode {
     val anchorNode = AnchorNode(sceneView.engine, anchor)
     val pointCube = CubeNode(
         engine = sceneView.engine,
         size = dev.romainguy.kotlin.math.Float3(
-            POINT_MARKER_SIZE_METERS,
-            POINT_MARKER_SIZE_METERS,
-            POINT_MARKER_SIZE_METERS,
+            markerSizeMeters,
+            markerSizeMeters,
+            markerSizeMeters,
         ),
+        materialInstance = materialInstance,
     )
     anchorNode.addChildNode(pointCube)
     sceneView.addChildNode(anchorNode)
@@ -264,6 +291,7 @@ private fun createEdgeAnchorNode(
 }
 
 private const val POINT_MARKER_SIZE_METERS = 0.005f
+private const val SERVER_POINT_MARKER_SIZE_METERS = 0.012f
 private const val LINE_THICKNESS_FACTOR = 0.02f
 private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f

@@ -79,6 +79,10 @@ fun Application.module(
         get("/zone-statuses") {
             call.respond(segmentationQueue.getZoneStatuses())
         }
+
+        get("/world-points") {
+            call.respond(segmentationQueue.getAllWorldPoints())
+        }
     }
 
     monitor.subscribe(io.ktor.server.application.ApplicationStopped) {

@@ -45,6 +45,19 @@ data class SnapshotUploadResponse(
 )
 
 /**
+ * World-space point reconstructed on the server.
+ *
+ * @param zoneId zone that owns this reconstructed point.
+ * @param position point position in world coordinates.
+ */
+@Serializable
+data class ServerWorldPointDto(
+    val zoneId: Long,
+    @Serializable(with = Vector3Serializer::class)
+    val position: Vector3F,
+)
+
+/**
  * Bounding box from python response.
  */
 @Serializable

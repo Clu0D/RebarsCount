@@ -53,6 +53,8 @@ class ArDetectionPipeline(
     )
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private val renderedSnapshotNodesByZone = IdentityHashMap<Zone, IdentityHashMap<ZoneSnapshot, AnchorNode>>()
+    private val renderedServerWorldPointNodes = mutableListOf<AnchorNode>()
+    private var lastServerWorldPoints: List<ServerWorldPointDto> = emptyList()
     private var detectionJob: Job? = null
     private var serverStatusJob: Job? = null
     private var lastDetectionAtMs = 0L
@@ -102,6 +104,8 @@ class ArDetectionPipeline(
         zonesManager.clear()
         renderedNodesByZone.clear()
         renderedSnapshotNodesByZone.clear()
+        clearRenderedServerWorldPoints()
+        lastServerWorldPoints = emptyList()
         baselineLandscapeRotation = null
     }
 
@@ -429,9 +433,12 @@ class ArDetectionPipeline(
      */
     private fun requestServerUpdates() {
         serverStatusJob = coroutineScope.launch {
-            val zoneTexts = runCatching {
+            val serverUpdate = runCatching {
                 withContext(Dispatchers.IO) {
-                    segmentationServerClient.fetchZoneTexts()
+                    ServerUpdatePayload(
+                        zoneTexts = segmentationServerClient.fetchZoneTexts(),
+                        worldPoints = segmentationServerClient.fetchWorldPoints(),
+                    )
                 }
             }.getOrElse { error ->
                 reportStatus(
@@ -443,11 +450,43 @@ class ArDetectionPipeline(
             if (!isSceneActive.get()) {
                 return@launch
             }
-            val changedZones = zonesManager.applyServerTexts(zoneTexts)
+            val changedZones = zonesManager.applyServerTexts(serverUpdate.zoneTexts)
             if (changedZones > 0) {
                 publishZoneScreenLabels()
             }
+            renderServerWorldPoints(serverUpdate.worldPoints)
         }
+    }
+
+    /**
+     * Redraws server world points with new changes.
+     *
+     * @param worldPoints latest world points fetched from the server.
+     */
+    private fun renderServerWorldPoints(worldPoints: List<ServerWorldPointDto>) {
+        if (worldPoints == lastServerWorldPoints) {
+            return
+        }
+        clearRenderedServerWorldPoints()
+        lastServerWorldPoints = worldPoints
+        if (!isSceneActive.get()) {
+            return
+        }
+        val activeSceneView = sceneView ?: return
+        renderedServerWorldPointNodes += createServerWorldPointMarkerNodes(
+            sceneView = activeSceneView,
+            worldPoints = worldPoints.map { worldPoint -> worldPoint.position },
+        )
+    }
+
+    /**
+     * Removes all currently rendered server world point nodes.
+     */
+    private fun clearRenderedServerWorldPoints() {
+        renderedServerWorldPointNodes.forEach { node ->
+            destroyAnchorNode(node)
+        }
+        renderedServerWorldPointNodes.clear()
     }
 
     /**
@@ -521,6 +560,17 @@ data class ZoneScreenLabelEntry(
     val text: String,
     val xPx: Float,
     val yPx: Float,
+)
+
+/**
+ * Combined payload fetched from the server refresh endpoint group.
+ *
+ * @param zoneTexts current zone status texts.
+ * @param worldPoints current triangulated world points.
+ */
+private data class ServerUpdatePayload(
+    val zoneTexts: Map<Long, String>,
+    val worldPoints: List<ServerWorldPointDto>,
 )
 
 private const val DETECTION_INTERVAL_MS = 5000L

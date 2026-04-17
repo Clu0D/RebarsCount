@@ -1,7 +1,5 @@
 package anton.axenov
 
-import korlibs.math.geom.Vector3F
-
 /**
  * Segmentation with all representative points derived from its instances.
  *
@@ -39,17 +37,6 @@ data class ZoneTriangulationPoint(
 }
 
 /**
- * Triangulated world-space point derived from corresponding 2D segmentation points.
- *
- * @param position reconstructed 3D point in world coordinates.
- * @param parentPoints source 2D points that were used to reconstruct this world point.
- */
-data class WorldPoint(
-    val position: Vector3F,
-    val parentPoints: Set<ZoneTriangulationPoint>,
-)
-
-/**
  * Manages triangulation candidates for all segmentation points of one zone.
  *
  * @param triangulationMath math helper used to find point correspondences between frames.
@@ -61,7 +48,14 @@ class ZoneTriangulationManager(
 ) {
 
     private val segmentationResults = mutableListOf<ZoneSegmentation>()
-    val worldPoints = mutableListOf<WorldPoint>()
+    private val worldPoints = mutableListOf<WorldPoint>()
+
+    /**
+     * Returns all reconstructed world points accumulated for this zone.
+     *
+     * @return immutable snapshot of world points.
+     */
+    fun getWorldPoints(): List<WorldPoint> = worldPoints.toList()
 
     /**
      * Adds one segmentation result for the zone and creates candidate sets for all of its points.

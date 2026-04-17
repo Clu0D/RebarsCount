@@ -9,6 +9,18 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import korlibs.math.geom.Vector3F
+
+/**
+ * Triangulated world-space point derived from corresponding 2D segmentation points.
+ *
+ * @param position reconstructed 3D point in world coordinates.
+ * @param parentPoints source 2D points that were used to reconstruct this world point.
+ */
+data class WorldPoint(
+    val position: Vector3F,
+    val parentPoints: Set<ZoneTriangulationPoint>,
+)
 
 /**
  * In-memory server state and background queue for Python segmentation.
@@ -95,6 +107,27 @@ class SegmentationQueue(
                     text = "${snapshots.size} snapshots, queued=$queued, processing=$processing, " +
                             "completed=$completed, failed=$failed",
                 )
+            }
+    }
+
+    /**
+     * Returns all reconstructed world points from all known zones.
+     *
+     * @return flattened world points ordered by zone id.
+     */
+    fun getAllWorldPoints(): List<ServerWorldPointDto> {
+        return zoneTriangulationManagersByZoneId
+            .toSortedMap()
+            .flatMap { (zoneId, manager) ->
+                synchronized(manager) {
+                    manager.getWorldPoints()
+                        .map { worldPoint ->
+                            ServerWorldPointDto(
+                                zoneId = zoneId,
+                                position = worldPoint.position,
+                            )
+                        }
+                }
             }
     }
 

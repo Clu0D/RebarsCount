@@ -74,6 +74,17 @@ class SegmentationServerClient(
     }
 
     /**
+     * Fetches all reconstructed world points.
+     *
+     * @return world points currently known by the server.
+     */
+    suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
+        return httpClient
+            .get("$normalizedBaseUrl/world-points")
+            .body()
+    }
+
+    /**
      * Fetches current zone texts keyed by zone id.
      *
      * @return map of zone id to server text.
