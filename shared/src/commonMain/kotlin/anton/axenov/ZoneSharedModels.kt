@@ -262,8 +262,22 @@ data class Zone(
         )
     }
 
+    /**
+     * Bigger convex hull without confidence used as bounding box for merging.
+     */
+    val mergeBoundingPolygonPoints: List<Vector3> by lazy {
+        val projectedPolygons = projectionInputs
+            .mapNotNull { input -> input.projectToPlane(planePose) }
+
+        buildConvexHullOnPlane(
+            worldPoints = projectedPolygons,
+            planePose = planePose,
+        )
+    }
+
     val boundingBox: ZoneBoundingBox3d by lazy {
         val basePoints = when {
+            mergeBoundingPolygonPoints.isNotEmpty() -> mergeBoundingPolygonPoints
             polygonPoints.isNotEmpty() -> polygonPoints
             sampledPoints.isNotEmpty() -> sampledPoints
             else -> listOf(planePose.center)
