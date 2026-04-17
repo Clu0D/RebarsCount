@@ -160,6 +160,25 @@ class ZonesManager(
     }
 
     /**
+     * Applies current server world-point counts to stored zones by identifier.
+     *
+     * @param worldPointCountsByZoneId map of zone id to number of reconstructed world points in scene.
+     * @return number of zones whose visible label text changed.
+     */
+    fun applyWorldPointCounts(worldPointCountsByZoneId: Map<Long, Int>): Int {
+        var changedZonesCount = 0
+        zones.forEach { zone ->
+            val previousLabelText = zone.labelText
+            zone.sceneWorldPointsCount = worldPointCountsByZoneId[zone.id] ?: 0
+            if (previousLabelText != zone.labelText) {
+                onZoneLabelUpdate(zone)
+                changedZonesCount++
+            }
+        }
+        return changedZonesCount
+    }
+
+    /**
      * Removes all currently queued zones and clears removal queue.
      *
      * @return actually removed zones that existed in manager.

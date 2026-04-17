@@ -27,6 +27,7 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param zoneDetector detector used to extract interest zones from snapshots.
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
+ * @param onWorldPointsInfoChanged callback invoked when global scene world-point diagnostics should be updated.
  * @param onUploadQueueInfoChanged callback invoked when upload queue diagnostics should be updated.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
  * @param onZoneScreenLabelsChanged callback invoked when projected on-screen zone labels should be updated.
@@ -38,6 +39,7 @@ class ArDetectionPipeline(
     private val zoneDetector: DetectInterestZones = DetectInterestZones(segmentationServerClient),
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
+    private val onWorldPointsInfoChanged: (String) -> Unit = {},
     private val onUploadQueueInfoChanged: (String) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
     private val onZoneScreenLabelsChanged: (List<ZoneScreenLabelEntry>) -> Unit = {},
@@ -159,6 +161,7 @@ class ArDetectionPipeline(
                 "Frame ts=${frame.timestamp}, " +
                         "tracking=${trackingState.name}, " +
                         "zonesPlaced=${renderedNodesByZone.size}, sceneNodes=${sceneNodes}, " +
+                        "serverWorldPoints=${lastServerWorldPoints.size}, " +
                         "uploadQueue=${snapshotUploadQueue.queuedCount()}, " +
                         "uploadActive=${snapshotUploadQueue.activeCount()}",
                 false,
@@ -480,7 +483,16 @@ class ArDetectionPipeline(
                 return@launch
             }
             val changedZones = zonesManager.applyServerTexts(serverUpdate.zoneTexts)
-            if (changedZones > 0) {
+            val changedWorldPointCounts = zonesManager.applyWorldPointCounts(
+                worldPointCountsByZoneId = serverUpdate.worldPoints
+                    .groupingBy { worldPoint -> worldPoint.zoneId }
+                    .eachCount(),
+            )
+            onWorldPointsInfoChanged(
+                "World points: scene=${serverUpdate.worldPoints.size}, " +
+                        "zonesWithPoints=${serverUpdate.worldPoints.map { it.zoneId }.distinct().size}",
+            )
+            if (changedZones > 0 || changedWorldPointCounts > 0) {
                 publishZoneScreenLabels()
             }
             renderServerWorldPoints(serverUpdate.worldPoints)

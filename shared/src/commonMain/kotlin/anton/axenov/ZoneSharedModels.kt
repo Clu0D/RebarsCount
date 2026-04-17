@@ -232,6 +232,7 @@ data class Zone(
     var metricsLabelText: String = "Metrics: waiting"
     var serverLabelText: String? = null
     var mergeLabelText: String? = null
+    var sceneWorldPointsCount: Int = 0
 
     /**
      * Is true when the zone has been placed in the world and can be used for segmentation.

@@ -89,7 +89,8 @@ fun buildZoneMetricsText(
             "${captureAngle.planarDirectionY.toPrecision(2)}) " +
             "cov=${(coverage.coverage * 100f).toPrecision(1)}%, " +
             "in=${if (coverage.isFullyInside) "Y" else "N"}\n" +
-            mergeText
+            mergeText + "\n" +
+            "points=${zone.sceneWorldPointsCount}, "
 }
 
 /**

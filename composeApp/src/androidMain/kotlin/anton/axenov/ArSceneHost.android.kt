@@ -154,6 +154,7 @@ actual fun ArSceneHost(
     var translationText by remember { mutableStateOf("[UNKNOWN, 0x0 img, 0x0 view]") }
     var serverText by remember { mutableStateOf("Server: checking") }
     var mergeDebugText by remember { mutableStateOf("Merge debug: waiting for first merge") }
+    var worldPointsDebugText by remember { mutableStateOf("World points: scene=0, zonesWithPoints=0") }
     var uploadQueueText by remember { mutableStateOf("Upload queue: queued=0, active=0") }
     var zoneScreenLabels by remember { mutableStateOf(emptyList<ZoneScreenLabelEntry>()) }
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
@@ -202,6 +203,9 @@ actual fun ArSceneHost(
             },
             onMergeInfoChanged = { mergeInfo ->
                 mergeDebugText = mergeInfo
+            },
+            onWorldPointsInfoChanged = { worldPointsInfo ->
+                worldPointsDebugText = worldPointsInfo
             },
             onUploadQueueInfoChanged = { queueInfo ->
                 uploadQueueText = queueInfo
@@ -292,7 +296,7 @@ actual fun ArSceneHost(
             modifier = Modifier.fillMaxSize(),
         )
         Text(
-            text = "$translationText\n$serverText\n$mergeDebugText\n$uploadQueueText\n$debugText",
+            text = "$translationText\n$serverText\n$mergeDebugText\n$worldPointsDebugText\n$uploadQueueText\n$debugText",
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(12.dp)
