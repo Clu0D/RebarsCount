@@ -31,10 +31,10 @@ class ZonesManager(
     fun addZones(newZones: List<Zone>) {
         newZones.forEach { newZone ->
             val mergeResult = tryMergeZones(newZone)
+            mergeDebugInfo += "${mergeResult.overlapZonesCount}: ${mergeResult.maxOverlapPercent}"
             val mergedZone = mergeResult.zone ?: return@forEach
             zones += mergedZone
             onZoneAddition(mergedZone)
-            mergeDebugInfo += "${mergeResult.overlapZonesCount}: ${mergeResult.maxOverlapPercent}"
         }
     }
 
@@ -248,16 +248,11 @@ class ZonesManager(
         if (zoneToMerge.isPlaced()) {
             return ZoneMergeResult(
                 zone = null,
-                overlapZonesCount = 0,
+                overlapZonesCount = 1,
                 maxOverlapPercent = maxOverlapPercent,
             )
         }
-
-        val removedZones = removeZones(listOf(zoneToMerge))
-        if (removedZones.isNotEmpty())
-            queuedZonesToRemove += removedZones
-
-        val zonesToMerge = removedZones + newZone
+        val zonesToMerge = listOf(zoneToMerge, newZone)
         val mergedProjectionInputs = zonesToMerge.flatMap { zone -> zone.projectionInputs }
         val mergedSampledPoints = zonesToMerge.flatMap { zone -> zone.sampledPoints }
         val cameraPosition = mergedProjectionInputs.firstOrNull()?.cameraPosition() ?: newZone.planePose.center
@@ -272,6 +267,16 @@ class ZonesManager(
             projectionInputs = mergedProjectionInputs,
         )
         val zoneChangeInsignificance = wasZoneChangeInsignificant(mergedZone, zonesToMerge)
+            ?: return ZoneMergeResult(
+                zone = null,
+                overlapZonesCount = 1,
+                maxOverlapPercent = maxOverlapPercent,
+            )
+
+        val removedZones = removeZones(listOf(zoneToMerge))
+        if (removedZones.isNotEmpty()) {
+            queuedZonesToRemove += removedZones
+        }
         mergedZone.mergeLabelText = zoneChangeInsignificance.mergeLabelText
         mergedZone.insignificantChanges = if (zoneChangeInsignificance.wasChangeInsignificant)
             zoneToMerge.insignificantChanges + 1
@@ -279,7 +284,7 @@ class ZonesManager(
             0
         return ZoneMergeResult(
             zone = mergedZone,
-            overlapZonesCount = removedZones.size,
+            overlapZonesCount = 1,
             maxOverlapPercent = maxOverlapPercent,
         )
     }

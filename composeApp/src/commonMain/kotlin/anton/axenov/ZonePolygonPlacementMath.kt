@@ -13,16 +13,15 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param normalizedDifferenceRatio normalized polygon symmetric-difference ratio.
  */
 internal data class ZoneChangeInsignificanceResult(
-    val planeAngleDegrees: Float?,
-    val normalizedDifferenceRatio: Float?,
+    val planeAngleDegrees: Float,
+    val normalizedDifferenceRatio: Float,
 ) {
     val wasChangeInsignificant =
-        planeAngleDegrees != null && normalizedDifferenceRatio != null &&
                 planeAngleDegrees < MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES &&
                 normalizedDifferenceRatio <= MERGED_ZONE_MAX_DIFFERENCE_RATIO
     val mergeLabelText by lazy {
-        "\nmerge ang=${planeAngleDegrees?.toPrecision(2) ?: "-"}deg, " +
-                "diff=${normalizedDifferenceRatio?.toPrecision(2) ?: "-"}"
+        "\nmerge ang=${planeAngleDegrees.toPrecision(2)}deg, " +
+                "diff=${normalizedDifferenceRatio.toPrecision(2)}"
     }
 }
 
@@ -36,9 +35,9 @@ internal data class ZoneChangeInsignificanceResult(
 internal fun wasZoneChangeInsignificant(
     mergedZone: Zone,
     sourceZones: List<Zone>,
-): ZoneChangeInsignificanceResult {
+): ZoneChangeInsignificanceResult? {
     if (sourceZones.size < 2 || mergedZone.polygonPoints.size < 3)
-        return ZoneChangeInsignificanceResult(null, null)
+        return null
 
     val sourceZone = sourceZones.first()
 
@@ -47,7 +46,7 @@ internal fun wasZoneChangeInsignificant(
         firstPolygon = mergedZone.polygonPoints,
         secondPolygon = sourceZone.polygonPoints,
         referencePlanePose = mergedZone.planePose,
-    )
+    ) ?: return null
     return ZoneChangeInsignificanceResult(planeAngleDegrees, normalizedDifferenceRatio)
 }
 
