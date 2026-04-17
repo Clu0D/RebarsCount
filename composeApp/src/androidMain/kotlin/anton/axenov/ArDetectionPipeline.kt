@@ -89,6 +89,23 @@ class ArDetectionPipeline(
         this.sceneView = sceneView
         isSceneActive.set(true)
         snapshotUploadQueue.start()
+        coroutineScope.launch {
+            val response = runCatching {
+                withContext(Dispatchers.IO) {
+                    segmentationServerClient.startNewSession()
+                }
+            }.getOrElse { error ->
+                reportStatus(
+                    "Failed to start new server session: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+                return@launch
+            }
+            if (!isSceneActive.get()) {
+                return@launch
+            }
+            reportStatus(response.message, true)
+        }
     }
 
     /**

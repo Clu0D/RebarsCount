@@ -83,6 +83,16 @@ fun Application.module(
         get("/world-points") {
             call.respond(segmentationQueue.getAllWorldPoints())
         }
+
+        post("/start_new_session") {
+            resetServerState()
+            call.respond(
+                ServerHealthResponse(
+                    ok = true,
+                    message = "Started new session and cleared server state",
+                ),
+            )
+        }
     }
 
     monitor.subscribe(io.ktor.server.application.ApplicationStopped) {

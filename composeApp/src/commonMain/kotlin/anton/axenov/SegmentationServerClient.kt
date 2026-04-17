@@ -33,6 +33,19 @@ class SegmentationServerClient(
     }
 
     /**
+     * Starts a new server-side session and clears old in-memory state.
+     *
+     * @return server response confirming session reset.
+     */
+    suspend fun startNewSession(): ServerHealthResponse {
+        return httpClient
+            .post("$normalizedBaseUrl/start_new_session") {
+                contentType(ContentType.Application.Json)
+            }
+            .body()
+    }
+
+    /**
      * Requests points prediction.
      *
      * @param payload serializable snapshot payload.
