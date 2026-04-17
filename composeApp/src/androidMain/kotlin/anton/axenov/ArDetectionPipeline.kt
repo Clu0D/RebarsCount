@@ -10,6 +10,7 @@ import io.github.sceneview.math.Position
 import io.github.sceneview.utils.worldToScreen
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -205,100 +206,111 @@ class ArDetectionPipeline(
                 lastDetectionAtMs = now
                 detectionJob = coroutineScope.launch(Dispatchers.Default) {
                     try {
-                        val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
-                            Surface.ROTATION_90,
-                            Surface.ROTATION_270,
-                                -> {
-                                val baseline = baselineLandscapeRotation
-                                if (baseline == null) {
-                                    baselineLandscapeRotation = displayRotation
-                                    CoordinateTranslationVariant.LANDSCAPE
-                                } else if (displayRotation == baseline) {
-                                    CoordinateTranslationVariant.LANDSCAPE
-                                } else {
-                                    CoordinateTranslationVariant.LANDSCAPE_REVERSED
+                        try {
+                            val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
+                                Surface.ROTATION_90,
+                                Surface.ROTATION_270,
+                                    -> {
+                                    val baseline = baselineLandscapeRotation
+                                    if (baseline == null) {
+                                        baselineLandscapeRotation = displayRotation
+                                        CoordinateTranslationVariant.LANDSCAPE
+                                    } else if (displayRotation == baseline) {
+                                        CoordinateTranslationVariant.LANDSCAPE
+                                    } else {
+                                        CoordinateTranslationVariant.LANDSCAPE_REVERSED
+                                    }
                                 }
-                            }
 
-                            else -> CoordinateTranslationVariant.PORTRAIT
-                        }
-                        if (translationVariant != lastTranslationVariant) {
-                            lastTranslationVariant = translationVariant
-                        }
-                        onTranslationInfoChanged(
-                            TranslationOverlayInfo(
-                                translationVariant = translationVariant,
-                                imageWidth = snapshot.imageWidth,
-                                imageHeight = snapshot.imageHeight,
-                                viewWidth = activeSceneView.width,
-                                viewHeight = activeSceneView.height,
-                            ),
-                        )
-                        val detectedZones = zoneDetector.detectZones(snapshot)
-                        withContext(Dispatchers.Main.immediate) {
-                            if (detectedZones.isEmpty()) {
-                                reportStatus("No interest zones detected", false)
-                                return@withContext
+                                else -> CoordinateTranslationVariant.PORTRAIT
                             }
-                            onZonesDetected(snapshot, detectedZones)
-                            if (!isSceneActive.get() || sceneView !== activeSceneView) {
-                                reportStatus(
-                                    "Zone placement skipped: scene was recreated/disposed during async detection.",
-                                    false,
-                                )
-                                return@withContext
+                            if (translationVariant != lastTranslationVariant) {
+                                lastTranslationVariant = translationVariant
                             }
-
-                            detectedZones.forEachIndexed { index, detectedZone ->
+                            onTranslationInfoChanged(
+                                TranslationOverlayInfo(
+                                    translationVariant = translationVariant,
+                                    imageWidth = snapshot.imageWidth,
+                                    imageHeight = snapshot.imageHeight,
+                                    viewWidth = activeSceneView.width,
+                                    viewHeight = activeSceneView.height,
+                                ),
+                            )
+                            val detectedZones = zoneDetector.detectZones(snapshot)
+                            withContext(Dispatchers.Main.immediate) {
+                                if (detectedZones.isEmpty()) {
+                                    reportStatus("No interest zones detected", false)
+                                    return@withContext
+                                }
+                                onZonesDetected(snapshot, detectedZones)
                                 if (!isSceneActive.get() || sceneView !== activeSceneView) {
                                     reportStatus(
-                                        "Zone placement stopped: scene was recreated/disposed during async detection.",
+                                        "Zone placement skipped: scene was recreated/disposed during async detection.",
                                         false,
                                     )
-                                    return@forEachIndexed
+                                    return@withContext
                                 }
 
-                                val placementResult = runCatching {
-                                    placeZoneInWorld(
-                                        sceneView = activeSceneView,
-                                        snapshot = snapshot,
-                                        detectedZone = detectedZone,
-                                        translationVariant = translationVariant,
-                                    )
-                                }.getOrElse { error ->
-                                    ZonePlacementResult(
-                                        zone = null,
-                                        details =
-                                            "Placement aborted: ${error.javaClass.simpleName}: " +
-                                                    (error.message ?: "unknown error"),
-                                    )
+                                detectedZones.forEachIndexed { index, detectedZone ->
+                                    if (!isSceneActive.get() || sceneView !== activeSceneView) {
+                                        reportStatus(
+                                            "Zone placement stopped: scene was recreated/disposed during async detection.",
+                                            false,
+                                        )
+                                        return@forEachIndexed
+                                    }
+
+                                    val placementResult = runCatching {
+                                        placeZoneInWorld(
+                                            sceneView = activeSceneView,
+                                            snapshot = snapshot,
+                                            detectedZone = detectedZone,
+                                            translationVariant = translationVariant,
+                                        )
+                                    }.getOrElse { error ->
+                                        ZonePlacementResult(
+                                            zone = null,
+                                            details =
+                                                "Placement aborted: ${error.javaClass.simpleName}: " +
+                                                        (error.message ?: "unknown error"),
+                                        )
+                                    }
+                                    if (placementResult.zone != null) {
+                                        zonesManager.addZones(listOf(placementResult.zone))
+                                        val mergeInfo = zonesManager.consumeMergeDebugInfos()
+                                        val mergeMessage = "Merge debug: $mergeInfo"
+                                        onMergeInfoChanged(mergeMessage)
+                                        reportStatus(
+                                            mergeMessage,
+                                            true,
+                                        )
+                                        removeQueuedZonesFromWorld()
+                                        reportStatus(
+                                            "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
+                                                    "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
+                                            true,
+                                        )
+                                    } else {
+                                        reportStatus(
+                                            "Zone ${index + 1}/${detectedZones.size} placement failed. ${placementResult.details}",
+                                            true,
+                                        )
+                                    }
                                 }
-                                if (placementResult.zone != null) {
-                                    zonesManager.addZones(listOf(placementResult.zone))
-                                    val mergeInfo = zonesManager.consumeMergeDebugInfos()
-                                    val mergeMessage = "Merge debug: $mergeInfo"
-                                    onMergeInfoChanged(mergeMessage)
-                                    reportStatus(
-                                        mergeMessage,
-                                        true,
-                                    )
-                                    removeQueuedZonesFromWorld()
-                                    reportStatus(
-                                        "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
-                                                "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
-                                        true,
-                                    )
-                                } else {
-                                    reportStatus(
-                                        "Zone ${index + 1}/${detectedZones.size} placement failed. ${placementResult.details}",
-                                        true,
-                                    )
-                                }
+                                reportStatus(
+                                    "Processed ${detectedZones.size} detected zone(s) from frame ts=${snapshot.frameTimestamp}",
+                                    true,
+                                )
                             }
-                            reportStatus(
-                                "Processed ${detectedZones.size} detected zone(s) from frame ts=${snapshot.frameTimestamp}",
-                                true,
-                            )
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            withContext(Dispatchers.Main.immediate) {
+                                reportStatus(
+                                    "Zone detection failed: ${error.message ?: error.javaClass.simpleName}",
+                                    true,
+                                )
+                            }
                         }
                     } finally {
                         snapshot.screenshot.recycle()
