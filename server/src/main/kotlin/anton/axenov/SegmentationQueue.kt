@@ -176,6 +176,7 @@ class SegmentationQueue(
                         zoneTriangulationManagersByZoneId[task.zoneId]?.let { zoneTriangulationManager ->
                             synchronized(zoneTriangulationManager) {
                                 zoneTriangulationManager.addSegmentationResult(
+                                    zone = record.snapshot.zone,
                                     frameSnapshot = record.snapshot.frameSnapshot,
                                     prediction = prediction,
                                 )

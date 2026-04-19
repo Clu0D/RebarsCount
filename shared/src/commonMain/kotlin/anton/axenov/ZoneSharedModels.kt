@@ -345,6 +345,18 @@ data class ZoneBoundingBox3d(
     }
 
     /**
+     * Checks whether [point] lies inside.
+     *
+     * @param point world-space point to test.
+     * @return true when the point is inside the box.
+     */
+    fun containsPoint(point: Vector3): Boolean {
+        return point.x in minX..maxX &&
+                point.y in minY..maxY &&
+                point.z in minZ..maxZ
+    }
+
+    /**
      * Computes intersection volume with another box.
      *
      * @param other second box.

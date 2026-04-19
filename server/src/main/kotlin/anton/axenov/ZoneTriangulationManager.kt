@@ -10,6 +10,7 @@ package anton.axenov
  */
 data class ZoneSegmentation(
     val segmentationIndex: Int,
+    val zone: Zone,
     val frameSnapshot: DetectionFrameSnapshotDto,
     val prediction: SegmentationPrediction,
 ) {
@@ -69,12 +70,14 @@ class ZoneTriangulationManager(
      * @return candidate sets created for points of the newly added segmentation.
      */
     fun addSegmentationResult(
+        zone: Zone,
         frameSnapshot: DetectionFrameSnapshotDto,
         prediction: SegmentationPrediction,
         epsilonPx: Double = defaultEpsilonPx,
     ) {
         val newSegmentation = ZoneSegmentation(
             segmentationIndex = segmentationResults.size,
+            zone = zone,
             frameSnapshot = frameSnapshot,
             prediction = prediction,
         )
@@ -126,6 +129,12 @@ class ZoneTriangulationManager(
                 firstImagePoint = point.imagePoint,
                 secondImagePoint = candidatePoint.imagePoint,
             ) ?: return@forEach
+
+            // filter point out if not inside zone bounding box
+            if (!point.segmentation.zone.boundingBox.containsPoint(worldPosition)) {
+                return@forEach
+            }
+
             worldPoints += WorldPoint(
                 position = worldPosition,
                 parentPoints = setOf(point, candidatePoint),
