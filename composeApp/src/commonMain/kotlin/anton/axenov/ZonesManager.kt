@@ -272,6 +272,13 @@ class ZonesManager(
                 overlapZonesCount = 1,
                 maxOverlapPercent = maxOverlapPercent,
             )
+        if (!simplifyZones(mergedZone, ignoredZones = zonesToMerge)) {
+            return ZoneMergeResult(
+                zone = null,
+                overlapZonesCount = 1,
+                maxOverlapPercent = maxOverlapPercent,
+            )
+        }
 
         val removedZones = removeZones(listOf(zoneToMerge))
         if (removedZones.isNotEmpty()) {
@@ -304,6 +311,24 @@ class ZonesManager(
                 storedZone to zoneBoundingBox.overlapRatioBySmallerBox(storedZone.boundingBox)
             }
             .toList()
+    }
+
+    /**
+     * Verifies merged does not create any new significant overlaps with other zones.
+     *
+     * @param zone produced merged candidate.
+     * @param ignoredZones zones that are part of the merge candidate and must be ignored.
+     * @return true when the merge is safe to keep.
+     */
+    private fun simplifyZones(
+        zone: Zone,
+        ignoredZones: List<Zone>,
+    ): Boolean {
+        val ignoredSet = ignoredZones.toSet()
+        return findZoneOverlaps(zone)
+            .none { (storedZone, overlap) ->
+                storedZone !in ignoredSet && overlap >= BOX_INTERSECTION_THRESHOLD
+            }
     }
 }
 
