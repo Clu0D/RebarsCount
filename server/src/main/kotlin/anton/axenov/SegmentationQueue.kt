@@ -31,6 +31,7 @@ data class WorldPoint(
  */
 class SegmentationQueue(
     private val workerCount: Int = DEFAULT_SEGMENTATION_WORKER_COUNT,
+    private val snapshotDebugStore: SnapshotDebugStore = SnapshotDebugStore(),
 ) {
     private val snapshotsByZoneId = ConcurrentHashMap<Long, CopyOnWriteArrayList<StoredSnapshotRecord>>()
     private val zoneTriangulationManagersByZoneId = ConcurrentHashMap<Long, ZoneTriangulationManager>()
@@ -81,6 +82,11 @@ class SegmentationQueue(
     fun addSnapshot(payload: ZoneSnapshotUploadDto): Int {
         val zoneSnapshots = snapshotsByZoneId.getOrPut(payload.zone.id) { CopyOnWriteArrayList() }
         zoneTriangulationManagersByZoneId.getOrPut(payload.zone.id) { ZoneTriangulationManager() }
+        val filename = "${payload.frameSnapshot.frameTimestamp}-zone-${payload.zone.id}.png"
+        snapshotDebugStore.savePredictPointsSnapshot(
+            sourceImageFilename = filename,
+            payload = payload,
+        )
         val record = StoredSnapshotRecord(payload)
         zoneSnapshots += record
         queue.trySend(
@@ -157,7 +163,7 @@ class SegmentationQueue(
                     record.segmentationError = null
                     record.segmentationResult = null
 
-                    val filename = "zone-${task.zoneId}-${record.snapshot.frameSnapshot.frameTimestamp}.png"
+                    val filename = "${record.snapshot.frameSnapshot.frameTimestamp}-zone-${task.zoneId}.png"
                     runCatching {
                         predictor.predict(
                             imageBytes = record.snapshot.frameSnapshot.screenshotPngBytes,

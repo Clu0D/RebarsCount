@@ -74,7 +74,7 @@ fun Application.module(
             val payload = call.receive<DetectionFrameSnapshotDto>()
             val prediction = predictor.predict(
                 imageBytes = payload.screenshotPngBytes,
-                filename = "zones-seg-${payload.frameTimestamp}.png",
+                filename = "${payload.frameTimestamp}-zones-seg.png",
                 zonePrediction = true
             )
             call.respond(prediction)
