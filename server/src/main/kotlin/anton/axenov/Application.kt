@@ -12,9 +12,15 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.serialization.kotlinx.KotlinxSerializationConverter
+import io.ktor.http.ContentType
 import kotlinx.serialization.json.Json
 
 private val segmentationQueue = SegmentationQueue()
+private val serverJson = Json {
+    ignoreUnknownKeys = true
+    prettyPrint = true
+}
 
 /**
  * Clears in-memory server state.
@@ -35,13 +41,11 @@ fun Application.module(
     predictor: SegmentationPredictor = SegmentationPredictor(),
 ) {
     segmentationQueue.configure(predictor)
+    val jsonConverter = KotlinxSerializationConverter(serverJson)
     install(ContentNegotiation) {
-        json(
-            Json {
-                ignoreUnknownKeys = true
-                prettyPrint = true
-            },
-        )
+        register(ContentType.Application.Json, jsonConverter)
+        register(ContentType.Text.Plain, jsonConverter)
+        register(ContentType.Application.OctetStream, jsonConverter)
     }
 
     routing {

@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.accept
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
@@ -54,6 +55,7 @@ class SegmentationServerClient(
     suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
         return httpClient
             .post("$normalizedBaseUrl/predict_points") {
+                accept(ContentType.Application.Json)
                 contentType(ContentType.Application.Json)
                 setBody(payload)
             }
@@ -69,6 +71,7 @@ class SegmentationServerClient(
     suspend fun predictZones(frameSnapshot: DetectionFrameSnapshotDto): SegmentationPrediction {
         return httpClient
             .post("$normalizedBaseUrl/predict_zones") {
+                accept(ContentType.Application.Json)
                 contentType(ContentType.Application.Json)
                 setBody(frameSnapshot)
             }

@@ -1,10 +1,14 @@
 package anton.axenov
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.media.Image
-import androidx.core.graphics.createBitmap
 import com.google.ar.core.Frame
 import com.google.ar.core.exceptions.NotYetAvailableException
+import java.io.ByteArrayOutputStream
 
 /**
  * Captures the camera screenshot + optional depth + camera intrinsics from one ARCore frame.
@@ -85,32 +89,35 @@ fun captureDetectionFrameSnapshot(frame: Frame): DetectionFrameSnapshotCaptureRe
 }
 
 /**
- * Converts one camera image to grayscale bitmap using Y plane values.
+ * Converts one camera image from `YUV_420_888` into a full-color ARGB bitmap.
  *
  * @param image camera image in `YUV_420_888`.
- * @return ARGB bitmap representing grayscale luminance.
+ * @return ARGB bitmap with full RGB color.
  */
 private fun cameraImageToBitmap(image: Image): Bitmap {
-    val width = image.width
-    val height = image.height
-    val plane = image.planes[0]
-    val buffer = plane.buffer
-    val rowStride = plane.rowStride
-    val pixelStride = plane.pixelStride
-    val pixels = IntArray(width * height)
+    // Get the three planes from the YUV_420_888 image
+    val yBuffer = image.planes[0].buffer
+    val uBuffer = image.planes[1].buffer
+    val vBuffer = image.planes[2].buffer
 
-    for (y in 0 until height) {
-        val rowStart = y * rowStride
-        for (x in 0 until width) {
-            val luma = buffer.get(rowStart + x * pixelStride).toInt() and 0xFF
-            val color = (0xFF shl 24) or (luma shl 16) or (luma shl 8) or luma
-            pixels[y * width + x] = color
-        }
-    }
+    // Combine all planes into a single byte array
+    val ySize = yBuffer.remaining()
+    val uSize = uBuffer.remaining()
+    val vSize = vBuffer.remaining()
 
-    return createBitmap(width, height).apply {
-        setPixels(pixels, 0, width, 0, 0, width, height)
-    }
+    val nv21 = ByteArray(ySize + uSize + vSize)
+
+    yBuffer.get(nv21, 0, ySize)
+    vBuffer.get(nv21, ySize, vSize)
+    uBuffer.get(nv21, ySize + vSize, uSize)
+
+    // Convert to JPEG then to Bitmap
+    val outputStream = ByteArrayOutputStream()
+    val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+    yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, outputStream)
+    val jpegData = outputStream.toByteArray()
+
+    return BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
 }
 
 /**
