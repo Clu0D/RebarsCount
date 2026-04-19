@@ -1,6 +1,8 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.api.GradleException
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -83,6 +85,28 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
 
+val filamentSourceAssetsDir = layout.projectDirectory.dir("src/androidMain/assets/materials")
+val filamentGeneratedAssetsDir = layout.buildDirectory.dir("generated/filament/materials")
+val defaultRepoMatcPath = rootProject.layout.projectDirectory.file(".tools/filament/1.68.2-host/filament/bin/matc").asFile.path
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use(::load)
+    }
+}
+val filamentMatcPathProvider = providers.gradleProperty("filament.matc.path")
+    .orElse(providers.provider { localProperties.getProperty("filament.matc.path") })
+    .orElse(providers.environmentVariable("FILAMENT_MATC"))
+    .orElse(providers.provider { defaultRepoMatcPath })
+
+val compileFilamentMaterials = tasks.register<CompileFilamentMaterialsTask>("compileFilamentMaterials") {
+    group = "build"
+    description = "Compiles Filament .mat sources into runtime .filamat assets."
+    sourceDir.set(filamentSourceAssetsDir)
+    outputDir.set(filamentGeneratedAssetsDir)
+    configuredMatcPath.convention(filamentMatcPathProvider.orElse(""))
+}
+
 android {
     namespace = "anton.axenov"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -108,6 +132,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    sourceSets["main"].assets.srcDir(filamentGeneratedAssetsDir)
+}
+
+tasks.named("preBuild") {
+    dependsOn(compileFilamentMaterials)
 }
 
 dependencies {

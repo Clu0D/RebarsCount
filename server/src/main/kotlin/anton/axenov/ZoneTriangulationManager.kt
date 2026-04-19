@@ -18,20 +18,23 @@ data class ZoneSegmentation(
             ZoneTriangulationPoint(
                 segmentation = this,
                 imagePoint = instance.bbox.centerPoint,
+                confidence = instance.confidence,
             )
         }
     }
 }
 
 /**
- * Stores one representative point for one segmented object instance.
+ * Representative point for one segmented object instance.
  *
  * @param segmentation source segmentation.
  * @param imagePoint representative image-space point for the instance.
+ * @param confidence of the model result.
  */
 data class ZoneTriangulationPoint(
     val segmentation: ZoneSegmentation,
     val imagePoint: ImagePoint,
+    val confidence: Float,
 ) {
     val candidatesBySegmentation: MutableMap<ZoneSegmentation, Set<ZoneTriangulationPoint>> = mutableMapOf()
 }
@@ -126,6 +129,7 @@ class ZoneTriangulationManager(
             worldPoints += WorldPoint(
                 position = worldPosition,
                 parentPoints = setOf(point, candidatePoint),
+                confidence = listOf(point.confidence, candidatePoint.confidence).average().toFloat(),
             )
         }
     }

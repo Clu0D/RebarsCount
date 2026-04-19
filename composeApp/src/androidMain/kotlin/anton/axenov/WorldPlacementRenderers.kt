@@ -1,6 +1,6 @@
 package anton.axenov
 
-import androidx.compose.ui.graphics.Color
+import com.google.android.filament.MaterialInstance
 import com.google.ar.core.Anchor
 import com.google.ar.core.exceptions.FatalException
 import com.google.ar.core.Pose
@@ -67,9 +67,6 @@ fun drawSnapshotCameraDirectionNode(
         lineEndWorld[1],
         lineEndWorld[2],
     )
-    val lineMaterial = sceneView.materialLoader.createColorInstance(
-        Color(1f, 0.55f, 0f, 1f),
-    )
     return createEdgeAnchorNode(
         sceneView = sceneView,
         session = session,
@@ -83,17 +80,18 @@ fun drawSnapshotCameraDirectionNode(
                 SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
                 SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
             ),
-            materialInstance = lineMaterial,
+            materialInstance = getUnlitMaterial(sceneView, 1f, 1f, 1f, 0.5f),
         )
     }
 }
 
 
 /**
- * Creates cube markers for world-space sample points and adds them to the scene.
+ * Creates markers for world points and adds them to the scene.
  *
  * @param sceneView active SceneView.
  * @param worldPoints world-space points to visualize.
+ * @param color point marker color.
  * @return created anchor nodes, one per point.
  */
 fun createWorldPointMarkerNodes(
@@ -101,17 +99,22 @@ fun createWorldPointMarkerNodes(
     worldPoints: List<Vector3>,
 ): List<AnchorNode> {
     val session = sceneView.session ?: return emptyList()
-    val materialInstance = sceneView.materialLoader.createColorInstance(
-        Color(1f, 1f, 1f, 1f),
-    )
-    return worldPoints.map { worldPoint ->
-        val anchor = session.createAnchor(Pose.makeTranslation(worldPoint.x, worldPoint.y, worldPoint.z))
-        createWorldPointMarkerAnchorNode(sceneView, anchor, POINT_MARKER_SIZE_METERS, materialInstance)
+    return worldPoints.mapNotNull { worldPoint ->
+        val anchor = createTranslationAnchor(
+            session = session,
+            worldPoint = worldPoint,
+        ) ?: return@mapNotNull null
+        createWorldPointMarkerAnchorNode(
+            sceneView = sceneView,
+            anchor = anchor,
+            markerSizeMeters = POINT_MARKER_SIZE_METERS,
+            materialInstance = getUnlitMaterial(sceneView, 1f, 1f, 1f, 0.5f),
+        )
     }
 }
 
 /**
- * Creates marker nodes for reconstructed world points and adds them to the scene.
+ * Creates markers for world points with confidence and adds them to the scene.
  *
  * @param sceneView active SceneView.
  * @param worldPoints world-space points to visualize.
@@ -122,29 +125,24 @@ fun createServerWorldPointMarkerNodes(
     worldPoints: List<ServerWorldPointDto>,
 ): List<AnchorNode> {
     val session = sceneView.session ?: return emptyList()
-    return worldPoints.map { worldPoint ->
+    return worldPoints.mapNotNull { worldPoint ->
         val confidence = worldPoint.confidence.coerceIn(0f, 1f)
-        val materialInstance = sceneView.materialLoader.createColorInstance(
-            Color(
-                1f - confidence,
-                0f,
-                confidence,
-                1f,
-            ),
-        )
-        val anchor = session.createAnchor(
-            Pose.makeTranslation(
-                worldPoint.position.x,
-                worldPoint.position.y,
-                worldPoint.position.z,
-            ),
-        )
+        val anchor = createTranslationAnchor(
+            session = session,
+            worldPoint = worldPoint.position,
+        ) ?: return@mapNotNull null
         createWorldPointMarkerAnchorNode(
             sceneView = sceneView,
             anchor = anchor,
             markerSizeMeters = SERVER_POINT_MARKER_MIN_SIZE_METERS +
                     (SERVER_POINT_MARKER_MAX_SIZE_METERS - SERVER_POINT_MARKER_MIN_SIZE_METERS) * confidence,
-            materialInstance = materialInstance,
+            materialInstance = getUnlitMaterial(
+                sceneView,
+                0f,
+                1f,
+                0f,
+                confidence
+            ),
         )
     }
 }
@@ -197,13 +195,15 @@ fun createPolygonMarkerNodes(
  *
  * @param sceneView active SceneView.
  * @param anchor anchor positioned at point coordinates.
+ * @param markerSizeMeters full marker size in meters.
+ * @param color point marker color.
  * @return created anchor node.
  */
 private fun createWorldPointMarkerAnchorNode(
     sceneView: ARSceneView,
     anchor: Anchor,
     markerSizeMeters: Float,
-    materialInstance: com.google.android.filament.MaterialInstance,
+    materialInstance: MaterialInstance,
 ): AnchorNode {
     val anchorNode = AnchorNode(sceneView.engine, anchor)
     val pointCube = CubeNode(
@@ -218,6 +218,32 @@ private fun createWorldPointMarkerAnchorNode(
     anchorNode.addChildNode(pointCube)
     sceneView.addChildNode(anchorNode)
     return anchorNode
+}
+
+/**
+ * Creates anchor for a world-space point.
+ *
+ * @param session active ARCore session.
+ * @param worldPoint world-space position.
+ * @return created anchor or null when ARCore rejects the pose.
+ */
+private fun createTranslationAnchor(
+    session: Session,
+    worldPoint: Vector3,
+): Anchor? {
+    return try {
+        session.createAnchor(
+            Pose.makeTranslation(
+                worldPoint.x,
+                worldPoint.y,
+                worldPoint.z,
+            ),
+        )
+    } catch (_: FatalException) {
+        null
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 }
 
 /**
@@ -248,9 +274,6 @@ private fun createZoneBoundingBoxNodes(
         4 to 5, 5 to 6, 6 to 7, 7 to 4,
         0 to 4, 1 to 5, 2 to 6, 3 to 7,
     )
-    val blueMaterial = sceneView.materialLoader.createColorInstance(
-        Color(0f, 0f, 1f, 1f),
-    )
     return edgeIndices.mapNotNull { (startIndex, endIndex) ->
         val start = points[startIndex]
         val end = points[endIndex]
@@ -267,7 +290,7 @@ private fun createZoneBoundingBoxNodes(
                     BOUNDING_BOX_LINE_THICKNESS_METERS,
                     BOUNDING_BOX_LINE_THICKNESS_METERS,
                 ),
-                materialInstance = blueMaterial,
+                materialInstance = getUnlitMaterial(sceneView, 0f, 0f, 1f, 1f),
             )
         }
     }
@@ -314,6 +337,14 @@ private fun createEdgeAnchorNode(
     anchorNode.addChildNode(edgeNodeFactory(edgeLength))
     sceneView.addChildNode(anchorNode)
     return anchorNode
+}
+
+private fun getUnlitMaterial(sceneView: ARSceneView, r: Float, g: Float, b: Float, a: Float = 1f): MaterialInstance {
+    val material = sceneView.materialLoader.createMaterial("materials/unlit_color.filamat")
+    val instance = sceneView.materialLoader.createInstance(material).apply {
+        setParameter("baseColor", r, g, b, a)
+    }
+    return instance
 }
 
 /**
