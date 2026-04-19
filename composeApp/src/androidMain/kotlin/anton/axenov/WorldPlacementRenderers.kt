@@ -2,12 +2,15 @@ package anton.axenov
 
 import androidx.compose.ui.graphics.Color
 import com.google.ar.core.Anchor
+import com.google.ar.core.exceptions.FatalException
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.node.CubeNode
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
 import korlibs.math.geom.Quaternion as Quaternion
 import korlibs.math.geom.Vector3F as Vector3
 
@@ -294,17 +297,71 @@ private fun createEdgeAnchorNode(
     }
     val edgeDirection = edgeVector / edgeLength
     val midpoint = (start + end) / 2f
-    val edgeRotation = Quaternion.fromVectors(Vector3(1f, 0f, 0f), edgeDirection.normalized())
-    val edgeAnchor = session.createAnchor(
-        Pose(
-            floatArrayOf(midpoint.x, midpoint.y, midpoint.z),
-            floatArrayOf(edgeRotation.x, edgeRotation.y, edgeRotation.z, edgeRotation.w),
-        ),
-    )
+    val edgeRotation = rotationFromPositiveXAxis(edgeDirection.normalized()) ?: return null
+    val edgeAnchor = try {
+        session.createAnchor(
+            Pose(
+                floatArrayOf(midpoint.x, midpoint.y, midpoint.z),
+                floatArrayOf(edgeRotation.x, edgeRotation.y, edgeRotation.z, edgeRotation.w),
+            ),
+        )
+    } catch (_: FatalException) {
+        return null
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
     val anchorNode = AnchorNode(sceneView.engine, edgeAnchor)
     anchorNode.addChildNode(edgeNodeFactory(edgeLength))
     sceneView.addChildNode(anchorNode)
     return anchorNode
+}
+
+/**
+ * Builds a normalized quaternion that rotates the positive X axis onto [direction].
+ *
+ * @param direction target unit direction.
+ * @return quaternion rotating `(1, 0, 0)` onto [direction], or null when invalid.
+ */
+private fun rotationFromPositiveXAxis(direction: Vector3): Quaternion? {
+    if (!direction.x.isFinite() || !direction.y.isFinite() || !direction.z.isFinite()) {
+        return null
+    }
+    val source = Vector3(1f, 0f, 0f)
+    val dot = source.dot(direction).coerceIn(-1f, 1f)
+    val quaternion = if (dot < -1f + OPPOSITE_DIRECTION_EPSILON) {
+        Quaternion(0f, 1f, 0f, 0f)
+    } else {
+        val cross = source.cross(direction)
+        val scale = sqrt((1f + dot) * 2f)
+        if (scale <= ROTATION_SCALE_EPSILON || !scale.isFinite()) {
+            return null
+        }
+        val inverseScale = 1f / scale
+        Quaternion(
+            x = cross.x * inverseScale,
+            y = cross.y * inverseScale,
+            z = cross.z * inverseScale,
+            w = scale * 0.5f,
+        )
+    }
+    return quaternion.takeIf(::isFiniteQuaternion)?.normalized()
+}
+
+/**
+ * Checks that quaternion components are all finite values.
+ *
+ * @param quaternion quaternion to validate.
+ * @return true when all components are finite.
+ */
+private fun isFiniteQuaternion(quaternion: Quaternion): Boolean {
+    return quaternion.x.isFinite() &&
+            quaternion.y.isFinite() &&
+            quaternion.z.isFinite() &&
+            quaternion.w.isFinite() &&
+            abs(quaternion.x) <= 1f + QUATERNION_COMPONENT_EPSILON &&
+            abs(quaternion.y) <= 1f + QUATERNION_COMPONENT_EPSILON &&
+            abs(quaternion.z) <= 1f + QUATERNION_COMPONENT_EPSILON &&
+            abs(quaternion.w) <= 1f + QUATERNION_COMPONENT_EPSILON
 }
 
 private const val POINT_MARKER_SIZE_METERS = 0.005f
@@ -317,3 +374,6 @@ private const val MIN_EDGE_LENGTH_METERS = 0.001f
 private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
 private const val SNAPSHOT_DIRECTION_LINE_LENGTH_METERS = 0.1f
 private const val SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS = 0.003f
+private const val OPPOSITE_DIRECTION_EPSILON = 1e-4f
+private const val ROTATION_SCALE_EPSILON = 1e-6f
+private const val QUATERNION_COMPONENT_EPSILON = 1e-3f
