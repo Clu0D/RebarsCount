@@ -3,6 +3,7 @@ package anton.axenov
 import android.os.SystemClock
 import android.view.Surface
 import com.google.ar.core.Frame
+import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
@@ -21,6 +22,7 @@ import korlibs.math.geom.Vector3F as Vector3
 /**
  * Coordinates end-to-end detection and placement for AR session updates.
  *
+ * @param cameraDistortionProvider provider of distortion coefficients for the camera.
  * @param coroutineScope scope used to run asynchronous detection work.
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param segmentationServerClient client used to upload snapshots and fetch info from server.
@@ -33,6 +35,7 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param onZoneScreenLabelsChanged callback invoked when projected on-screen zone labels should be updated.
  */
 class ArDetectionPipeline(
+    private val cameraDistortionProvider: ArCameraDistortionProvider,
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val segmentationServerClient: SegmentationServerClient,
@@ -70,6 +73,7 @@ class ArDetectionPipeline(
     private var lastStatusAtMs = 0L
     private var baselineLandscapeRotation: Int? = null
     private var lastTranslationVariant: CoordinateTranslationVariant? = null
+    private var currentSession: Session? = null
     private val snapshotUploadQueue = SnapshotUploadQueue(
         coroutineScope = coroutineScope,
         segmentationServerClient = segmentationServerClient,
@@ -127,6 +131,11 @@ class ArDetectionPipeline(
         clearRenderedServerWorldPoints()
         lastServerWorldPoints = emptyList()
         baselineLandscapeRotation = null
+        currentSession = null
+    }
+
+    fun onSessionConfigured(session: Session) {
+        currentSession = session
     }
 
     /**
@@ -139,6 +148,9 @@ class ArDetectionPipeline(
             return
         }
         val activeSceneView = sceneView ?: return
+        val distortionCoefficients = currentSession
+            ?.let(cameraDistortionProvider::distortionCoefficients)
+            .orEmpty()
 
         if (!asyncPlacementNoticeShown) {
             asyncPlacementNoticeShown = true
@@ -214,7 +226,10 @@ class ArDetectionPipeline(
         publishZoneScreenLabels()
 
         if (now - lastDetectionAtMs >= DETECTION_INTERVAL_MS && detectionJob?.isActive != true) {
-            val captureResult = captureDetectionFrameSnapshot(frame)
+            val captureResult = captureDetectionFrameSnapshot(
+                frame = frame,
+                distortionCoefficients = distortionCoefficients,
+            )
             val snapshot = captureResult.snapshot
             if (snapshot != null) {
                 if (snapshot.depthSnapshot == null &&
@@ -447,7 +462,12 @@ class ArDetectionPipeline(
         if (zones.isEmpty()) {
             return
         }
-        val captureResult = captureDetectionFrameSnapshot(frame)
+        val captureResult = captureDetectionFrameSnapshot(
+            frame = frame,
+            distortionCoefficients = currentSession
+                ?.let(cameraDistortionProvider::distortionCoefficients)
+                .orEmpty(),
+        )
         val snapshot = captureResult.snapshot ?: return
         try {
             zones.forEach { zone ->

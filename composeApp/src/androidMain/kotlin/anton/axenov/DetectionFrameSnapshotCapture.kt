@@ -16,9 +16,13 @@ import java.io.ByteArrayOutputStream
  * The returned snapshot is immutable and safe to process asynchronously.
  *
  * @param frame ARCore frame to snapshot.
+ * @param distortionCoefficients lens distortion coefficients.
  * @return capture attempt result with snapshot and diagnostics.
  */
-fun captureDetectionFrameSnapshot(frame: Frame): DetectionFrameSnapshotCaptureResult {
+fun captureDetectionFrameSnapshot(
+    frame: Frame,
+    distortionCoefficients: List<Float> = emptyList(),
+): DetectionFrameSnapshotCaptureResult {
     val cameraImage = try {
         frame.acquireCameraImage()
     } catch (_: NotYetAvailableException) {
@@ -69,6 +73,7 @@ fun captureDetectionFrameSnapshot(frame: Frame): DetectionFrameSnapshotCaptureRe
                 focalLengthY = focalLength[1],
                 principalPointX = principalPoint[0],
                 principalPointY = principalPoint[1],
+                distortionCoefficients = distortionCoefficients,
                 cameraPose = frame.camera.pose,
                 depthSnapshot = depthSnapshot,
             ),

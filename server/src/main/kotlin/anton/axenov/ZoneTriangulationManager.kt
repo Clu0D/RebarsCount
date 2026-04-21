@@ -44,11 +44,11 @@ data class ZoneTriangulationPoint(
  * Manages triangulation candidates for all segmentation points of one zone.
  *
  * @param triangulationMath math helper used to find point correspondences between frames.
- * @param defaultEpsilonPx default maximal epipolar distance in pixels.
+ * @param defaultEpsilonMeters default maximal physical distance between corresponding viewing rays.
  */
 class ZoneTriangulationManager(
     private val triangulationMath: TriangulationMath = TriangulationMath(),
-    private val defaultEpsilonPx: Double = DEFAULT_EPIPOLAR_EPSILON_PX,
+    private val defaultEpsilonMeters: Double = DEFAULT_CORRESPONDENCE_EPSILON_METERS,
 ) {
 
     private val segmentationResults = mutableListOf<ZoneSegmentation>()
@@ -66,14 +66,14 @@ class ZoneTriangulationManager(
      *
      * @param frameSnapshot frame snapshot that produced the segmentation.
      * @param prediction segmentation result for the frame.
-     * @param epsilonPx maximal distance in pixels from the epipolar line.
+     * @param epsilonMeters maximal physical distance between corresponding viewing rays.
      * @return candidate sets created for points of the newly added segmentation.
      */
     fun addSegmentationResult(
         zone: Zone,
         frameSnapshot: DetectionFrameSnapshotDto,
         prediction: SegmentationPrediction,
-        epsilonPx: Double = defaultEpsilonPx,
+        epsilonMeters: Double = defaultEpsilonMeters,
     ) {
         val newSegmentation = ZoneSegmentation(
             segmentationIndex = segmentationResults.size,
@@ -82,7 +82,7 @@ class ZoneTriangulationManager(
             prediction = prediction,
         )
         for (segmentation in segmentationResults)
-            addPointsCandidatesBySegmentation(newSegmentation, segmentation, epsilonPx)
+            addPointsCandidatesBySegmentation(newSegmentation, segmentation, epsilonMeters)
 
         segmentationResults += newSegmentation
     }
@@ -90,24 +90,26 @@ class ZoneTriangulationManager(
     /**
      * Builds candidate groups between two segmentations.
      *
-     * @param epsilonPx maximal distance in pixels from the epipolar line.
+     * @param epsilonMeters maximal physical distance between corresponding viewing rays.
      * @return map of older segmentation index to all candidate points from that segmentation.
      */
     private fun addPointsCandidatesBySegmentation(
         segmentation: ZoneSegmentation,
         anotherSegmentation: ZoneSegmentation,
-        epsilonPx: Double
+        epsilonMeters: Double
     ) {
         val correspondence = triangulationMath.correspondenceCandidates(
             firstSnapshot = segmentation.frameSnapshot,
             secondSnapshot = anotherSegmentation.frameSnapshot,
             firstImagePoints = segmentation.points.map { it.imagePoint },
             secondImagePoints = anotherSegmentation.points.map { it.imagePoint },
-            epsilonPx = epsilonPx,
+            epsilonMeters = epsilonMeters,
         )
         segmentation.points.forEachIndexed { index, point ->
-            val candidatePoints = correspondence[index].map { anotherSegmentation.points[it] }.toSet()
-            point.candidatesBySegmentation[anotherSegmentation] = candidatePoints
+            val candidatePoints = correspondence[index].map { (index, midPoint) ->
+                Pair(anotherSegmentation.points[index], midPoint)
+            }
+            point.candidatesBySegmentation[anotherSegmentation] = candidatePoints.map { it.first }.toSet()
             addWorldPointsForCandidates(point, candidatePoints)
         }
     }
@@ -120,15 +122,10 @@ class ZoneTriangulationManager(
      */
     private fun addWorldPointsForCandidates(
         point: ZoneTriangulationPoint,
-        candidatePoints: Set<ZoneTriangulationPoint>,
+        candidatePoints: List<Pair<ZoneTriangulationPoint, TriangulationMath.RaysMidPoint>>,
     ) {
         candidatePoints.forEach { candidatePoint ->
-            val worldPosition = triangulationMath.triangulateWorldPoint(
-                firstSnapshot = point.segmentation.frameSnapshot,
-                secondSnapshot = candidatePoint.segmentation.frameSnapshot,
-                firstImagePoint = point.imagePoint,
-                secondImagePoint = candidatePoint.imagePoint,
-            ) ?: return@forEach
+            val worldPosition = candidatePoint.second.midPoint
 
             // filter point out if not inside zone bounding box
             if (!point.segmentation.zone.boundingBox.containsPoint(worldPosition)) {
@@ -137,11 +134,11 @@ class ZoneTriangulationManager(
 
             worldPoints += WorldPoint(
                 position = worldPosition,
-                parentPoints = setOf(point, candidatePoint),
-                confidence = listOf(point.confidence, candidatePoint.confidence).average().toFloat(),
+                parentPoints = setOf(point, candidatePoint.first),
+                confidence = listOf(point.confidence, candidatePoint.first.confidence).average().toFloat(),
             )
         }
     }
 }
 
-private const val DEFAULT_EPIPOLAR_EPSILON_PX = 5.0
+private const val DEFAULT_CORRESPONDENCE_EPSILON_METERS = 0.05

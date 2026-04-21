@@ -177,6 +177,9 @@ actual fun ArSceneHost(
             },
         )
     }
+    val cameraDistortionProvider = remember(context) {
+        ArCameraDistortionProvider(context)
+    }
     val statusReporter = remember {
         SceneStatusReporter { debugMessage ->
             debugText = debugMessage
@@ -189,6 +192,7 @@ actual fun ArSceneHost(
         segmentationServerClient,
     ) {
         ArDetectionPipeline(
+            cameraDistortionProvider = cameraDistortionProvider,
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
             segmentationServerClient = segmentationServerClient,
@@ -258,6 +262,7 @@ actual fun ArSceneHost(
             modifier = Modifier.fillMaxSize(),
             planeRenderer = false,
             sessionConfiguration = { session, config ->
+                detectionPipeline.onSessionConfigured(session)
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                     config.depthMode = Config.DepthMode.AUTOMATIC
                 }

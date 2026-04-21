@@ -143,6 +143,7 @@ data class CameraPoseDto(
  * @param focalLengthY camera focal length Y.
  * @param principalPointX camera principal point X.
  * @param principalPointY camera principal point Y.
+ * @param distortionCoefficients lens distortion coefficients.
  * @param cameraPose camera pose.
  * @param depthSnapshot optional depth snapshot.
  */
@@ -156,6 +157,7 @@ data class DetectionFrameSnapshotDto(
     val focalLengthY: Float,
     val principalPointX: Float,
     val principalPointY: Float,
+    val distortionCoefficients: List<Float> = emptyList(),
     val cameraPose: CameraPoseDto,
     val depthSnapshot: DepthSnapshot?,
 )

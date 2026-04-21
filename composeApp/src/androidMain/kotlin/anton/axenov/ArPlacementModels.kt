@@ -14,6 +14,7 @@ import com.google.ar.core.Pose
  * @param focalLengthY camera focal length Y in pixels.
  * @param principalPointX camera principal point X in pixels.
  * @param principalPointY camera principal point Y in pixels.
+ * @param distortionCoefficients lens distortion coefficients.
  * @param cameraPose camera pose for this exact frame.
  * @param depthSnapshot depth values sampled from this exact frame or null when depth is unavailable.
  */
@@ -26,6 +27,7 @@ data class DetectionFrameSnapshot(
     val focalLengthY: Float,
     val principalPointX: Float,
     val principalPointY: Float,
+    val distortionCoefficients: List<Float>,
     val cameraPose: Pose,
     val depthSnapshot: DepthSnapshot?,
 )

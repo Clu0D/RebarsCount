@@ -192,6 +192,7 @@ fun DetectionFrameSnapshot.toPayload(): DetectionFrameSnapshotDto {
         focalLengthY = focalLengthY,
         principalPointX = principalPointX,
         principalPointY = principalPointY,
+        distortionCoefficients = distortionCoefficients,
         cameraPose = CameraPoseDto(
             translation = Vector3F(
                 x = cameraPose.tx(),
