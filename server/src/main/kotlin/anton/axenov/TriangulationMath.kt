@@ -46,33 +46,14 @@ class TriangulationMath {
         }
         return firstRays.map { firstRay ->
             secondRays.mapIndexedNotNull { index, secondRay ->
-                val raysMidPoint = raysMidPoint(firstRay, secondRay) ?: return@mapIndexedNotNull null
+                val raysMidPoint = raysMidPoint(
+                    firstRay = firstRay,
+                    secondRay = secondRay,
+                    distanceEpsilonMeters = epsilonMeters,
+                ) ?: return@mapIndexedNotNull null
                 Pair(index, raysMidPoint).takeIf { raysMidPoint.distance <= epsilonMeters }
             }
         }
-    }
-
-    /**
-     * OpenCV triangulation reconstructs one world-space point from a pair of image points
-     * from different frames as if they were corresponding.
-     *
-     * @param firstSnapshot first frame snapshot with camera intrinsics and pose.
-     * @param secondSnapshot second frame snapshot with camera intrinsics and pose.
-     * @param firstImagePoint point from the first image.
-     * @param secondImagePoint corresponding point from the second image.
-     * @return reconstructed world-space point or null if bad triangulation.
-     */
-    fun triangulateWorldPoint(
-        firstSnapshot: DetectionFrameSnapshotDto,
-        secondSnapshot: DetectionFrameSnapshotDto,
-        firstImagePoint: ImagePoint,
-        secondImagePoint: ImagePoint,
-    ): Vector3? {
-        val firstRay = worldRay(firstSnapshot, firstImagePoint)
-        val secondRay = worldRay(secondSnapshot, secondImagePoint)
-        val (distance, midPoint) = raysMidPoint(firstRay, secondRay)
-            ?: return null
-        return midPoint
     }
 
     /**
@@ -125,11 +106,13 @@ class TriangulationMath {
      *
      * @param firstRay first world-space viewing ray.
      * @param secondRay second world-space viewing ray.
+     * @param distanceEpsilonMeters max accepted physical distance between rays.
      * @return distance between 2 rays and point between them.
      */
     private fun raysMidPoint(
         firstRay: CameraRay,
         secondRay: CameraRay,
+        distanceEpsilonMeters: Double,
     ): RaysMidPoint? {
         val delta = firstRay.origin - secondRay.origin
         val a = firstRay.direction.dot(firstRay.direction)
@@ -157,13 +140,23 @@ class TriangulationMath {
         val distance = (firstPoint - secondPoint).length.toDouble()
         val midPoint = (firstPoint + secondPoint) * 0.5f
 
-        return RaysMidPoint(distance, midPoint)
+        return RaysMidPoint(
+            distance = distance,
+            midPoint = midPoint,
+            distanceConfidence = distanceConfidence(distance, distanceEpsilonMeters),
+            angleConfidence = angleConfidence(firstRay.direction, secondRay.direction),
+        )
     }
 
     /**
-     * Midpoint between 2 rays
+     * Midpoint between 2 rays with confidence generated while triangulation
      */
-    data class RaysMidPoint(val distance: Double, val midPoint: Vector3)
+    data class RaysMidPoint(
+        val distance: Double,
+        val midPoint: Vector3,
+        val distanceConfidence: Float,
+        val angleConfidence: Float,
+    )
 
     /**
      * World-space ray from camera.
@@ -181,8 +174,27 @@ class TriangulationMath {
         cameraMatrix.put(1, 2, frame.principalPointY.toDouble())
         return cameraMatrix
     }
+
+    private fun distanceConfidence(
+        distance: Double,
+        distanceEpsilonMeters: Double,
+    ): Float {
+        return ((1.0 - (distance / distanceEpsilonMeters)) * (1.0 + DISTANCE_CONFIDENCE_COEFFICIENT))
+            .toFloat()
+            .coerceIn(0f, 1f)
+    }
+
+    private fun angleConfidence(
+        firstDirection: Vector3,
+        secondDirection: Vector3,
+    ): Float {
+        return (firstDirection.cross(secondDirection).length * ANGLE_CONFIDENCE_COEFFICIENT)
+            .coerceIn(0f, 1f)
+    }
 }
 
 private const val RAY_PARALLEL_EPSILON = 1e-6
 private const val MIN_RAY_DEPTH_METERS = 0.1f
 private const val MAX_TRIANGULATION_DISTANCE_METERS = 10f
+private const val DISTANCE_CONFIDENCE_COEFFICIENT = 1.5f
+private const val ANGLE_CONFIDENCE_COEFFICIENT = 2f

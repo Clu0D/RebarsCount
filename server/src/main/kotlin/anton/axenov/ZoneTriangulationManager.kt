@@ -135,7 +135,10 @@ class ZoneTriangulationManager(
             worldPoints += WorldPoint(
                 position = worldPosition,
                 parentPoints = setOf(point, candidatePoint.first),
-                confidence = listOf(point.confidence, candidatePoint.first.confidence).average().toFloat(),
+                confidence = point.confidence *
+                        candidatePoint.first.confidence *
+                        candidatePoint.second.distanceConfidence *
+                        candidatePoint.second.angleConfidence,
             )
         }
     }
