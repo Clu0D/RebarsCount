@@ -50,24 +50,23 @@ class ZoneTriangulationManager(
     private val triangulationMath: TriangulationMath = TriangulationMath(),
     private val defaultEpsilonMeters: Double = DEFAULT_CORRESPONDENCE_EPSILON_METERS,
 ) {
+    private val worldPointHypothesisResolvers: MutableMap<Zone, WorldPointHypothesisResolver> = mutableMapOf()
 
     private val segmentationResults = mutableListOf<ZoneSegmentation>()
-    private val rawWorldPoints = mutableListOf<WorldPoint>()
-    private var resolvedWorldPoints = emptyList<WorldPoint>()
-
-    /**
-     * Returns all raw pairwise reconstructed world points accumulated for this zone.
-     *
-     * @return immutable snapshot of raw world points.
-     */
-    fun getWorldPoints(): List<WorldPoint> = rawWorldPoints.toList()
 
     /**
      * Returns resolved multi-view world points accumulated for this zone.
      *
      * @return immutable snapshot of resolved world points.
      */
-    fun getResolvedWorldPoints(): List<WorldPoint> = resolvedWorldPoints.toList()
+    fun getResolvedWorldPoints(): List<WorldPoint> {
+        val resolvedWorldPoints = mutableListOf<WorldPoint>()
+
+        worldPointHypothesisResolvers.forEach { (_, resolver) ->
+            resolvedWorldPoints.addAll(resolver.resolvedComponents.map { it.toWorldPoint() })
+        }
+        return resolvedWorldPoints.toList()
+    }
 
     /**
      * Adds one segmentation result for the zone and creates candidate sets for all of its points.
@@ -83,6 +82,7 @@ class ZoneTriangulationManager(
         prediction: SegmentationPrediction,
         epsilonMeters: Double = defaultEpsilonMeters,
     ) {
+        val newPoints = mutableListOf<WorldPoint>()
         val newSegmentation = ZoneSegmentation(
             segmentationIndex = segmentationResults.size,
             zone = zone,
@@ -90,10 +90,10 @@ class ZoneTriangulationManager(
             prediction = prediction,
         )
         for (segmentation in segmentationResults)
-            addPointsCandidatesBySegmentation(newSegmentation, segmentation, epsilonMeters)
+            newPoints += getPointsCandidatesBySegmentation(newSegmentation, segmentation, epsilonMeters)
 
         segmentationResults += newSegmentation
-        resolveWorldPoints()
+        resolveWorldPoints(newSegmentation.zone, newPoints)
     }
 
     /**
@@ -102,11 +102,12 @@ class ZoneTriangulationManager(
      * @param epsilonMeters maximal physical distance between corresponding viewing rays.
      * @return map of older segmentation index to all candidate points from that segmentation.
      */
-    private fun addPointsCandidatesBySegmentation(
+    private fun getPointsCandidatesBySegmentation(
         segmentation: ZoneSegmentation,
         anotherSegmentation: ZoneSegmentation,
         epsilonMeters: Double
-    ) {
+    ): List<WorldPoint> {
+        val newPoints = mutableListOf<WorldPoint>()
         val correspondence = triangulationMath.correspondenceCandidates(
             firstSnapshot = segmentation.frameSnapshot,
             secondSnapshot = anotherSegmentation.frameSnapshot,
@@ -119,8 +120,9 @@ class ZoneTriangulationManager(
                 Pair(anotherSegmentation.points[index], midPoint)
             }
             point.candidatesBySegmentation[anotherSegmentation] = candidatePoints.map { it.first }.toSet()
-            addWorldPointsForCandidates(point, candidatePoints)
+            newPoints += getWorldPointsForCandidates(point, candidatePoints)
         }
+        return newPoints
     }
 
     /**
@@ -129,41 +131,34 @@ class ZoneTriangulationManager(
      * @param point point from the newly added segmentation.
      * @param candidatePoints candidate corresponding points from another segmentation.
      */
-    private fun addWorldPointsForCandidates(
+    private fun getWorldPointsForCandidates(
         point: ZoneTriangulationPoint,
         candidatePoints: List<Pair<ZoneTriangulationPoint, TriangulationMath.RaysMidPoint>>,
-    ) {
-        candidatePoints.forEach { candidatePoint ->
+    ): List<WorldPoint> {
+        return candidatePoints.mapNotNull { candidatePoint ->
             val worldPosition = candidatePoint.second.midPoint
 
             // filter point out if not inside zone bounding box
-            if (!point.segmentation.zone.boundingBox.containsPoint(worldPosition)) {
-                return@forEach
-            }
-
-            rawWorldPoints += WorldPoint(
-                position = worldPosition,
-                parentPoints = setOf(point, candidatePoint.first),
-                confidence = point.confidence *
-                        candidatePoint.first.confidence *
-                        candidatePoint.second.distanceConfidence *
-                        candidatePoint.second.angleConfidence,
-            )
+            if (!point.segmentation.zone.boundingBox.containsPoint(worldPosition))
+                null
+            else
+                WorldPoint(
+                    position = worldPosition,
+                    parentPoints = setOf(point, candidatePoint.first),
+                    confidence = point.confidence *
+                            candidatePoint.first.confidence *
+                            candidatePoint.second.distanceConfidence *
+                            candidatePoint.second.angleConfidence,
+                )
         }
     }
 
     /**
      * Rebuilds resolved multi-view point centers from all currently accumulated 2-view WorldPoints.
      */
-    private fun resolveWorldPoints() {
-        resolvedWorldPoints = WorldPointHypothesisResolver(rawWorldPoints).resolve()
-            .map { component ->
-                WorldPoint(
-                    position = component.position,
-                    parentPoints = component.selectedObservations,
-                    confidence = component.confidence,
-                )
-            }
+    private fun resolveWorldPoints(zone: Zone, newPoints: MutableList<WorldPoint>) {
+        val resolver = worldPointHypothesisResolvers.getOrPut(zone) { WorldPointHypothesisResolver() }
+        resolver.resolve(newPoints)
     }
 }
 

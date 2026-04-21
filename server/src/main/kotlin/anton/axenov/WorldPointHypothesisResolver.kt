@@ -2,6 +2,7 @@ package anton.axenov
 
 import korlibs.math.geom.Vector3F
 import kotlin.collections.component1
+import kotlin.collections.plusAssign
 import kotlin.collections.set
 import kotlin.math.max
 
@@ -14,109 +15,138 @@ import kotlin.math.max
  * 2. iteratively finding the best compatible observations from new frames,
  * 3. either adding new or replacing old observation, trying to make the most consistent set of observations.
  *
+ * When new points are added they are tried to be added to existing hypothesis,
+ * then the main resolve is used for all unused points.
+ *
  * @param clusterRadiusMeters maximal allowed distance from component center for edge to be added.
  * @param conflictConfidenceThreshold normalized confidence below which edge is treated as a conflict.
  * @param replacementImprovementEpsilon minimal improvement required to perform a replacement move.
  * @param minSupportEdgesForReplacement minimal number of strong edges required before replacement.
  */
 class WorldPointHypothesisResolver(
-    worldPoints: List<WorldPoint>,
+    private val minNormalizationConfidence: Float = 0.0f,
+    private val maxNormalizationConfidence: Float = 0.8f,
     private val clusterRadiusMeters: Float = DEFAULT_CLUSTER_RADIUS_METERS,
     private val conflictConfidenceThreshold: Float = DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD,
     private val replacementImprovementEpsilon: Float = DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON,
     private val minSupportEdgesForReplacement: Int = DEFAULT_MIN_SUPPORT_EDGES_FOR_REPLACEMENT,
 ) {
+    val worldPoints = mutableSetOf<WorldPoint>()
+    val resolvedComponents = mutableListOf<HypothesisComponent>()
+    var worldPointByObservations = mutableMapOf<Set<ZoneTriangulationPoint>, WorldPoint>()
+
     /**
      * WorldPoints with normalized confidence.
      */
-    val worldPoints: MutableSet<WorldPoint> = run {
-        val validWorldPoints = worldPoints.filter { worldPoint -> worldPoint.parentPoints.size == 2 }
-        if (validWorldPoints.isEmpty()) {
-            emptyList()
-        } else {
-            val minConfidence = validWorldPoints.minOf { worldPoint -> worldPoint.confidence }
-            val maxConfidence = validWorldPoints.maxOf { worldPoint -> worldPoint.confidence }
-            val confidenceRange = maxConfidence - minConfidence
-            if (confidenceRange <= 0e-6) {
-                validWorldPoints
-            } else {
-                validWorldPoints.map { worldPoint ->
-                    worldPoint.copy(
-                        confidence = (worldPoint.confidence - minConfidence) / confidenceRange
-                    )
-                }
-            }
+    private fun normalize(newWorldPoints: List<WorldPoint>): List<WorldPoint> {
+        val confidenceRange = maxNormalizationConfidence - minNormalizationConfidence
+        return newWorldPoints.map { worldPoint ->
+            worldPoint.copy(
+                confidence = ((worldPoint.confidence - minNormalizationConfidence) / confidenceRange)
+                    .coerceIn(0f, 1f)
+            )
         }
-    }.toMutableSet()
+    }
 
-    var worldPointByObservations = buildWorldPointByObservations()
-
-    private fun buildWorldPointByObservations(): Map<Set<ZoneTriangulationPoint>, WorldPoint> {
+    /**
+     * Builds lookup map for points by observation pairs.
+     */
+    private fun buildWorldPointByObservations(): MutableMap<Set<ZoneTriangulationPoint>, WorldPoint> {
         val map = mutableMapOf<Set<ZoneTriangulationPoint>, WorldPoint>()
         worldPoints.forEach { point ->
             map += point.parentPoints to point
         }
-        return map.toMap()
+        return map
     }
-
-    /**
-     * Component that indicates one real-world point.
-     *
-     * @param position weighted component center.
-     * @param confidence aggregated component confidence in range `[0, 1]`.
-     * @param selectedObservations chosen per-frame observations supporting this point.
-     * @param supportWorldPoints pairwise support edges selected into the component.
-     */
-    data class ResolvedWorldPointComponent(
-        val position: Vector3F,
-        val confidence: Float,
-        val selectedObservations: Set<ZoneTriangulationPoint>,
-        val supportWorldPoints: Set<WorldPoint>,
-    )
 
     /**
      * Resolves 2-view [WorldPoint]s into multi-view components.
      *
-     * @param worldPoints raw triangulated points.
+     * @param newWorldPoints raw triangulated points.
      * @return resolved dense components ordered by descending confidence.
      */
-    fun resolve(): List<ResolvedWorldPointComponent> {
-        val resolvedComponents = mutableListOf<ResolvedWorldPointComponent>()
+    @Synchronized
+    fun resolve(newWorldPoints: List<WorldPoint>): List<WorldPoint> {
+        val normalizedPoints = normalize(newWorldPoints)
+        worldPoints += normalizedPoints
+        worldPointByObservations = buildWorldPointByObservations()
 
+        normalizedPoints.forEach { newPoint ->
+            mergeNewPointIntoResolvedComponents(newPoint)?.let { component ->
+                removeUsedObservations(component)
+            }
+        }
+
+        val usedPoints = mutableSetOf<WorldPoint>()
         while (true) {
-            val bestPoint = worldPoints.maxByOrNull { hypothesis -> hypothesis.confidence } ?: break
-            val component = growComponent(bestPoint)
+            val bestPoint = (worldPoints.toSet() - usedPoints).maxByOrNull { it.confidence } ?: break
+            val component = growComponent(bestPoint, worldPoints)
             if (component.isBad()) {
-                worldPoints.remove(bestPoint)
+                usedPoints += bestPoint
                 continue
             }
 
-            resolvedComponents += component.toResolvedComponent()
-
-            val usedObservations = component.selectedByFrame.values.toSet()
-            worldPoints.removeAll { point ->
-                point in component.supportByPair.values ||
-                        point.parentPoints.any { it in usedObservations }
-            }
-            worldPointByObservations = buildWorldPointByObservations()
+            resolvedComponents += component
+            removeUsedObservations(component)
         }
+        return resolvedComponents.map { it.toWorldPoint() }.sortedByDescending { component -> component.confidence }
+    }
 
-        return resolvedComponents.sortedByDescending { component -> component.confidence }
+    /**
+     * Removes points associated with observations from one component.
+     */
+    fun removeUsedObservations(component: HypothesisComponent) {
+        val usedObservations = component.curObservations()
+        worldPoints.removeAll { point ->
+            point in component.curPoints() ||
+                    point.parentPoints.any { it in usedObservations }
+        }
+        worldPointByObservations = buildWorldPointByObservations()
+    }
+
+    /**
+     * Tries to merge every new point into each previously resolved component.
+     *
+     * @param components mutable old components.
+     * @param newPoint point to be absorbed.
+     */
+    private fun mergeNewPointIntoResolvedComponents(
+        newPoint: WorldPoint,
+    ): HypothesisComponent? {
+        val candidateComponents = resolvedComponents
+            .filter { component -> (newPoint.position - component.center).length <= clusterRadiusMeters }
+            .sortedBy { component -> (newPoint.position - component.center).length }
+
+        candidateComponents.forEach { component ->
+            val candidateObservations = newPoint.parentPoints
+                .filterNot { observation -> observation in component.curObservations() }
+                .filterNot { observation -> observation.segmentation in component.selectedByFrame }
+
+            var added = false
+            candidateObservations.forEach { candidateObservation ->
+                if (component.tryAddingOrReplacingCandidate(candidateObservation)) {
+                    component.recomputeCenterAndConfidence()
+                    added = true
+                }
+            }
+            if (added)
+                return component
+        }
+        return null
     }
 
     /**
      * Greedily grows one component from [worldPoint].
      *
-     * @param worldPoint strongest remaining pairwise hypothesis.
+     * @param worldPoint strongest remaining hypothesis.
+     * @param candidatePoints points allowed for growth.
      * @return completed component after add/replace hill climbing converges.
      */
-    private fun growComponent(
-        worldPoint: WorldPoint,
-    ): HypothesisComponent {
-        val component = HypothesisComponent(worldPoint)
+    private fun growComponent(worldPoint: WorldPoint, candidatePoints: Set<WorldPoint>): HypothesisComponent {
+        val component = HypothesisComponent(worldPoint = worldPoint)
 
         loop@ while (true) {
-            val closestObservations = component.getClosestObservations()
+            val closestObservations = component.getClosestObservations(candidatePoints)
             closestObservations.forEach { observation ->
                 if (component.tryAddingOrReplacingCandidate(observation)) {
                     component.recomputeCenterAndConfidence()
@@ -136,7 +166,7 @@ class WorldPointHypothesisResolver(
      * @param center current weighted component center.
      * @param confidence aggregated component confidence.
      */
-    private inner class HypothesisComponent(worldPoint: WorldPoint) {
+    inner class HypothesisComponent(worldPoint: WorldPoint) {
         val selectedByFrame = worldPoint.parentPoints.associateBy { p -> p.segmentation }.toMutableMap()
         val supportByPair = mutableMapOf(worldPoint.parentPoints to worldPoint)
         var center = worldPoint.position
@@ -144,18 +174,6 @@ class WorldPointHypothesisResolver(
 
         fun curPoints(): Set<WorldPoint> = supportByPair.values.toSet()
         fun curObservations(): Set<ZoneTriangulationPoint> = selectedByFrame.values.toSet()
-
-        /**
-         * Returns the strongest current support of [observation] to the rest of the component.
-         *
-         * @param observation selected observation already inside the component.
-         * @return sum of normalized pairwise support confidences.
-         */
-        fun currentSupportOf(observation: ZoneTriangulationPoint): Float {
-            return sumConfidenceByEdges(
-                curPoints().filter { hypothesis -> observation in hypothesis.parentPoints }
-            )
-        }
 
         /**
          * Recomputes weighted center and aggregated confidence from current support edges.
@@ -176,14 +194,13 @@ class WorldPointHypothesisResolver(
         }
 
         /**
-         * Converts to public immutable output.
+         * Converts to one client-facing resolved world point.
          */
-        fun toResolvedComponent(): ResolvedWorldPointComponent {
-            return ResolvedWorldPointComponent(
+        fun toWorldPoint(): WorldPoint {
+            return WorldPoint(
                 position = center,
+                parentPoints = curObservations(),
                 confidence = confidence,
-                selectedObservations = curObservations(),
-                supportWorldPoints = curPoints(),
             )
         }
 
@@ -283,7 +300,9 @@ class WorldPointHypothesisResolver(
                         return false
 
                     val replacedObservation = conflictingObservations.single()
-                    val replacedSupport = currentSupportOf(replacedObservation)
+                    val replacedSupport = sumConfidenceByEdges(
+                        curPoints().filter { point -> replacedObservation in point.parentPoints }
+                    )
                     val improvement = supportSum - replacedSupport
                     if (improvement <= replacementImprovementEpsilon)
                         return false
