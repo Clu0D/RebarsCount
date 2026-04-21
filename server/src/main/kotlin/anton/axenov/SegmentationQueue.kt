@@ -128,7 +128,7 @@ class SegmentationQueue(
             .toSortedMap()
             .flatMap { (zoneId, manager) ->
                 synchronized(manager) {
-                    manager.getWorldPoints()
+                    manager.getResolvedWorldPoints()
                         .map { worldPoint ->
                             ServerWorldPointDto(
                                 zoneId = zoneId,

@@ -52,14 +52,22 @@ class ZoneTriangulationManager(
 ) {
 
     private val segmentationResults = mutableListOf<ZoneSegmentation>()
-    private val worldPoints = mutableListOf<WorldPoint>()
+    private val rawWorldPoints = mutableListOf<WorldPoint>()
+    private var resolvedWorldPoints = emptyList<WorldPoint>()
 
     /**
-     * Returns all reconstructed world points accumulated for this zone.
+     * Returns all raw pairwise reconstructed world points accumulated for this zone.
      *
-     * @return immutable snapshot of world points.
+     * @return immutable snapshot of raw world points.
      */
-    fun getWorldPoints(): List<WorldPoint> = worldPoints.toList()
+    fun getWorldPoints(): List<WorldPoint> = rawWorldPoints.toList()
+
+    /**
+     * Returns resolved multi-view world points accumulated for this zone.
+     *
+     * @return immutable snapshot of resolved world points.
+     */
+    fun getResolvedWorldPoints(): List<WorldPoint> = resolvedWorldPoints.toList()
 
     /**
      * Adds one segmentation result for the zone and creates candidate sets for all of its points.
@@ -85,6 +93,7 @@ class ZoneTriangulationManager(
             addPointsCandidatesBySegmentation(newSegmentation, segmentation, epsilonMeters)
 
         segmentationResults += newSegmentation
+        resolveWorldPoints()
     }
 
     /**
@@ -132,7 +141,7 @@ class ZoneTriangulationManager(
                 return@forEach
             }
 
-            worldPoints += WorldPoint(
+            rawWorldPoints += WorldPoint(
                 position = worldPosition,
                 parentPoints = setOf(point, candidatePoint.first),
                 confidence = point.confidence *
@@ -141,6 +150,20 @@ class ZoneTriangulationManager(
                         candidatePoint.second.angleConfidence,
             )
         }
+    }
+
+    /**
+     * Rebuilds resolved multi-view point centers from all currently accumulated 2-view WorldPoints.
+     */
+    private fun resolveWorldPoints() {
+        resolvedWorldPoints = WorldPointHypothesisResolver(rawWorldPoints).resolve()
+            .map { component ->
+                WorldPoint(
+                    position = component.position,
+                    parentPoints = component.selectedObservations,
+                    confidence = component.confidence,
+                )
+            }
     }
 }
 

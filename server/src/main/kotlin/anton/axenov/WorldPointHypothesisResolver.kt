@@ -143,7 +143,7 @@ class WorldPointHypothesisResolver(
         var confidence = worldPoint.confidence
 
         fun curPoints(): Set<WorldPoint> = supportByPair.values.toSet()
-        fun curObservations() : Set<ZoneTriangulationPoint> = selectedByFrame.values.toSet()
+        fun curObservations(): Set<ZoneTriangulationPoint> = selectedByFrame.values.toSet()
 
         /**
          * Returns the strongest current support of [observation] to the rest of the component.
@@ -153,10 +153,8 @@ class WorldPointHypothesisResolver(
          */
         fun currentSupportOf(observation: ZoneTriangulationPoint): Float {
             return sumConfidenceByEdges(
-                curPoints()
-                    .filter { hypothesis ->
-                        observation in hypothesis.parentPoints
-                    })
+                curPoints().filter { hypothesis -> observation in hypothesis.parentPoints }
+            )
         }
 
         /**
@@ -196,12 +194,11 @@ class WorldPointHypothesisResolver(
          *  sorted by distance
          * and get the observation that is still not in component
          */
-        fun getClosestObservations(): Set<ZoneTriangulationPoint> {
+        fun getClosestObservations(candidatePoints: Set<WorldPoint>): Set<ZoneTriangulationPoint> {
             val selectedObservations = curObservations()
             val candidateDistanceByObservation = mutableMapOf<ZoneTriangulationPoint, Float>()
 
-            // todo add some spatial map to find closest set faster
-            worldPoints
+            candidatePoints
                 .filterNot { worldPoint -> worldPoint in curPoints() }
                 .filter { worldPoint -> worldPoint.parentPoints.any { observation -> observation in selectedObservations } }
                 .forEach { worldPoint ->
@@ -233,7 +230,7 @@ class WorldPointHypothesisResolver(
         fun replaceObservation(
             observation: ZoneTriangulationPoint,
             replacedObservation: ZoneTriangulationPoint,
-            supportEdges: List<WorldPoint>
+            supportEdges: List<WorldPoint>,
         ) {
             selectedByFrame.remove(replacedObservation.segmentation)
             supportByPair.entries.removeAll { (_, hypothesis) ->
@@ -245,6 +242,12 @@ class WorldPointHypothesisResolver(
             }
         }
 
+        /**
+         * Tries to add or replace [candidateObservation].
+         *
+         * @param candidateObservation candidate observation.
+         * @return true when the component changed.
+         */
         fun tryAddingOrReplacingCandidate(candidateObservation: ZoneTriangulationPoint): Boolean {
             if (candidateObservation.segmentation in selectedByFrame)
                 return false
@@ -296,9 +299,7 @@ class WorldPointHypothesisResolver(
         /**
          * Is true when [worldPoint] lies close enough to [center] to belong to the component.
          */
-        private fun isPointClose(
-            worldPoint: WorldPoint
-        ): Boolean {
+        private fun isPointClose(worldPoint: WorldPoint): Boolean {
             return (worldPoint.position - center).length <= clusterRadiusMeters
         }
 
