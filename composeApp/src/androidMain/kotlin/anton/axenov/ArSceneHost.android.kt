@@ -157,6 +157,7 @@ actual fun ArSceneHost(
     var worldPointsDebugText by remember { mutableStateOf("World points: scene=0, zonesWithPoints=0") }
     var uploadQueueText by remember { mutableStateOf("Upload queue: queued=0, active=0") }
     var zoneScreenLabels by remember { mutableStateOf(emptyList<ZoneScreenLabelEntry>()) }
+    var interfaceControlState by remember { mutableStateOf(InterfaceControlState()) }
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
@@ -299,6 +300,11 @@ actual fun ArSceneHost(
         ZoneScreenLabelsOverlay(
             labels = zoneScreenLabels,
             modifier = Modifier.fillMaxSize(),
+        )
+        InterfaceControlPanel(
+            state = interfaceControlState,
+            onStateChanged = { interfaceControlState = it },
+            modifier = Modifier.align(Alignment.BottomStart),
         )
         Text(
             text = "$translationText\n$serverText\n$mergeDebugText\n$worldPointsDebugText\n$uploadQueueText\n$debugText",
