@@ -14,6 +14,8 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.serialization.kotlinx.KotlinxSerializationConverter
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 
 private val segmentationQueue = SegmentationQueue()
@@ -72,11 +74,26 @@ fun Application.module(
 
         post("/predict_zones") {
             val payload = call.receive<DetectionFrameSnapshotDto>()
-            val prediction = predictor.predict(
-                imageBytes = payload.screenshotPngBytes,
-                filename = "${payload.frameTimestamp}-zones-seg.png",
-                zonePrediction = true
-            )
+            val prediction = try {
+                predictor.predict(
+                    imageBytes = payload.screenshotPngBytes,
+                    filename = "${payload.frameTimestamp}-zones-seg.png",
+                    zonePrediction = true,
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) {
+                    throw error
+                }
+                log.error("Zone prediction failed", error)
+                call.respond(
+                    HttpStatusCode.BadGateway,
+                    ServerHealthResponse(
+                        ok = false,
+                        message = error.message ?: "Unknown Python segmentation error",
+                    ),
+                )
+                return@post
+            }
             call.respond(prediction)
         }
 

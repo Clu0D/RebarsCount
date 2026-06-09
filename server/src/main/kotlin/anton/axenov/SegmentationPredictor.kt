@@ -1,7 +1,6 @@
 package anton.axenov
 
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
@@ -12,7 +11,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
-
 
 /**
  * Predicts segmentation for one image by calling external Python service.
@@ -42,7 +40,7 @@ class SegmentationPredictor(
     suspend fun predict(
         imageBytes: ByteArray,
         filename: String,
-        zonePrediction:Boolean,
+        zonePrediction: Boolean,
     ): SegmentationPrediction {
         val url = if (zonePrediction)
             "$baseUrl/predict_zones"
@@ -67,8 +65,16 @@ class SegmentationPredictor(
         if (!response.status.isSuccess()) {
             error("Python segmentation failed: ${response.status.value} ${response.bodyAsText()}")
         }
-        println("response.body ${response.body<SegmentationPrediction>()}")
-        return response.body()
+        val responseBody = response.bodyAsText()
+        return try {
+            predictorJson.decodeFromString(responseBody)
+        } catch (error: Exception) {
+            throw IllegalStateException(
+                "Python segmentation returned invalid JSON: " +
+                        responseBody.take(MAX_PREDICTOR_ERROR_BODY_LENGTH),
+                error,
+            )
+        }
     }
 
     /**
@@ -79,4 +85,8 @@ class SegmentationPredictor(
     }
 }
 
+private val predictorJson = Json {
+    ignoreUnknownKeys = true
+}
+private const val MAX_PREDICTOR_ERROR_BODY_LENGTH = 2_000
 private const val PYTHON_SEGMENTATION_SERVER_URL = "http://127.0.0.1:8001"

@@ -6,8 +6,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.accept
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.utils.io.core.Closeable
 
 /**
@@ -30,7 +33,7 @@ class SegmentationServerClient(
     suspend fun requestHealth(): ServerHealthResponse {
         return httpClient
             .get("$normalizedBaseUrl/health")
-            .body()
+            .bodyOrThrow("Health request")
     }
 
     /**
@@ -43,7 +46,7 @@ class SegmentationServerClient(
             .post("$normalizedBaseUrl/start_new_session") {
                 contentType(ContentType.Application.Json)
             }
-            .body()
+            .bodyOrThrow("Starting a new session")
     }
 
     /**
@@ -59,7 +62,7 @@ class SegmentationServerClient(
                 contentType(ContentType.Application.Json)
                 setBody(payload)
             }
-            .body()
+            .bodyOrThrow("Point prediction")
     }
 
     /**
@@ -75,7 +78,7 @@ class SegmentationServerClient(
                 contentType(ContentType.Application.Json)
                 setBody(frameSnapshot)
             }
-            .body()
+            .bodyOrThrow("Zone prediction")
     }
 
     /**
@@ -86,7 +89,7 @@ class SegmentationServerClient(
     suspend fun fetchZoneStatuses(): List<ZoneStatus> {
         return httpClient
             .get("$normalizedBaseUrl/zone-statuses")
-            .body()
+            .bodyOrThrow("Fetching zone statuses")
     }
 
     /**
@@ -97,7 +100,7 @@ class SegmentationServerClient(
     suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return httpClient
             .get("$normalizedBaseUrl/world-points")
-            .body()
+            .bodyOrThrow("Fetching world points")
     }
 
     /**
@@ -117,3 +120,21 @@ class SegmentationServerClient(
         httpClient.close()
     }
 }
+
+/**
+ * Decodes a successful response or throws an error containing the server response body.
+ *
+ * @param operation user-readable operation name included in an error.
+ * @return decoded successful response body.
+ */
+private suspend inline fun <reified T> HttpResponse.bodyOrThrow(operation: String): T {
+    if (!status.isSuccess()) {
+        val errorBody = bodyAsText().take(MAX_ERROR_BODY_LENGTH)
+        throw IllegalStateException(
+            "$operation failed: HTTP ${status.value} ${status.description}: $errorBody",
+        )
+    }
+    return body()
+}
+
+private const val MAX_ERROR_BODY_LENGTH = 2_000
