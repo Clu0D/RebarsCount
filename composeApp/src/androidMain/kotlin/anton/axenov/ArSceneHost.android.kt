@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -158,6 +159,7 @@ actual fun ArSceneHost(
     var uploadQueueText by remember { mutableStateOf("Upload queue: queued=0, active=0") }
     var zoneScreenLabels by remember { mutableStateOf(emptyList<ZoneScreenLabelEntry>()) }
     var interfaceControlState by remember { mutableStateOf(InterfaceControlState()) }
+    val latestInterfaceControlState = rememberUpdatedState(interfaceControlState)
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
@@ -197,6 +199,15 @@ actual fun ArSceneHost(
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
             segmentationServerClient = segmentationServerClient,
+            isZoneAdditionEnabled = {
+                latestInterfaceControlState.value.isZoneAdditionEnabled
+            },
+            isPointRecognitionEnabled = {
+                latestInterfaceControlState.value.isPointRecognitionEnabled
+            },
+            isFullResultVisible = {
+                latestInterfaceControlState.value.isFullResultVisible
+            },
             onTranslationInfoChanged = { info ->
                 translationText = formatTranslationOverlayText(
                     orientationName = info.translationVariant.name,
@@ -315,6 +326,15 @@ actual fun ArSceneHost(
                 .padding(8.dp),
             color = Color.White,
         )
+        if (interfaceControlState.isFullResultVisible) {
+            FullResultOverlay(
+                resultText = detectionPipeline.buildFullResultText(),
+                onClose = {
+                    interfaceControlState = interfaceControlState.copy(isFullResultVisible = false)
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 

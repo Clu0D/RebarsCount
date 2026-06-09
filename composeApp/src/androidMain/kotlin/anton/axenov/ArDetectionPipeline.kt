@@ -27,6 +27,9 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param segmentationServerClient client used to upload snapshots and fetch info from server.
  * @param zoneDetector detector used to extract interest zones from snapshots.
+ * @param isZoneAdditionEnabled provider indicating whether frames may be used to detect and add zones.
+ * @param isPointRecognitionEnabled provider indicating whether frames may be stored and sent for point recognition.
+ * @param isFullResultVisible provider indicating whether sending new frames is paused by the result screen.
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
  * @param onWorldPointsInfoChanged callback invoked when global scene world-point diagnostics should be updated.
@@ -40,6 +43,9 @@ class ArDetectionPipeline(
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val segmentationServerClient: SegmentationServerClient,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(segmentationServerClient),
+    private val isZoneAdditionEnabled: () -> Boolean = { true },
+    private val isPointRecognitionEnabled: () -> Boolean = { true },
+    private val isFullResultVisible: () -> Boolean = { false },
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
     private val onWorldPointsInfoChanged: (String) -> Unit = {},
@@ -209,13 +215,15 @@ class ArDetectionPipeline(
                 screenHeight = activeSceneView.height,
                 worldPointProjector = worldPointProjector,
             )
-            addZoneSnapshots(
-                frame = frame,
-                cameraPosition = cameraPosition,
-                screenWidth = activeSceneView.width,
-                screenHeight = activeSceneView.height,
-                worldPointProjector = worldPointProjector,
-            )
+            if (isPointRecognitionEnabled() && !isFullResultVisible()) {
+                addZoneSnapshots(
+                    frame = frame,
+                    cameraPosition = cameraPosition,
+                    screenWidth = activeSceneView.width,
+                    screenHeight = activeSceneView.height,
+                    worldPointProjector = worldPointProjector,
+                )
+            }
         }
 
         if (now - lastServerStatusRefreshAtMs >= SERVER_REFRESH_INTERVAL_MS && serverStatusJob?.isActive != true) {
@@ -225,7 +233,11 @@ class ArDetectionPipeline(
 
         publishZoneScreenLabels()
 
-        if (now - lastDetectionAtMs >= DETECTION_INTERVAL_MS && detectionJob?.isActive != true) {
+        if (isZoneAdditionEnabled() &&
+            !isFullResultVisible() &&
+            now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
+            detectionJob?.isActive != true
+        ) {
             val captureResult = captureDetectionFrameSnapshot(
                 frame = frame,
                 distortionCoefficients = distortionCoefficients,
@@ -356,6 +368,15 @@ class ArDetectionPipeline(
                 reportStatus("Detection snapshot skipped: ${captureResult.details}", false)
             }
         }
+    }
+
+    /**
+     * Builds the current session result displayed by the full-result screen.
+     *
+     * @return text containing the number of reconstructed points assigned to each zone.
+     */
+    fun buildFullResultText(): String {
+        return buildSessionResultText(zonesManager.getZones())
     }
 
     /**
