@@ -1,25 +1,12 @@
 package anton.axenov
 
 import kotlin.math.abs
-import nu.pattern.OpenCV
-import org.opencv.calib3d.Calib3d
-import org.opencv.core.CvType
-import org.opencv.core.Mat
-import org.opencv.core.MatOfDouble
-import org.opencv.core.MatOfPoint2f
-import org.opencv.core.Point
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
  * Finds epipolar-consistent point candidates between two frame snapshots.
  */
 class TriangulationMath {
-
-    companion object {
-        init {
-            OpenCV.loadLocally()
-        }
-    }
 
     /**
      * Finds epipolar-consistent correspondence candidates for every point from [firstImagePoints].
@@ -87,18 +74,34 @@ class TriangulationMath {
      * @param imagePoint distorted image-space point.
      * @return undistorted normalized camera coordinates.
      */
-    private fun undistortImagePoint(frame: DetectionFrameSnapshotDto, imagePoint: ImagePoint): Point {
-        val distortedPoints = MatOfPoint2f(
-            Point(imagePoint.x.toDouble(), imagePoint.y.toDouble()),
-        )
-        val undistortedPoints = MatOfPoint2f()
-        Calib3d.undistortPoints(
-            distortedPoints,
-            undistortedPoints,
-            cameraMatrix(frame),
-            MatOfDouble(*frame.distortionCoefficients.map { it.toDouble() }.toDoubleArray()),
-        )
-        return undistortedPoints.toArray().single()
+    private fun undistortImagePoint(frame: DetectionFrameSnapshotDto, imagePoint: ImagePoint): NormalizedImagePoint {
+        val distortedX = (imagePoint.x - frame.principalPointX) / frame.focalLengthX
+        val distortedY = (imagePoint.y - frame.principalPointY) / frame.focalLengthY
+        val coefficients = frame.distortionCoefficients
+        if (coefficients.isEmpty()) {
+            return NormalizedImagePoint(distortedX.toDouble(), distortedY.toDouble())
+        }
+
+        var x = distortedX.toDouble()
+        var y = distortedY.toDouble()
+        repeat(UNDISTORTION_ITERATIONS) {
+            val radiusSquared = x * x + y * y
+            val radial = 1.0 +
+                coefficient(coefficients, 0) * radiusSquared +
+                coefficient(coefficients, 1) * radiusSquared * radiusSquared +
+                coefficient(coefficients, 4) * radiusSquared * radiusSquared * radiusSquared
+            val tangentialX =
+                2.0 * coefficient(coefficients, 2) * x * y +
+                    coefficient(coefficients, 3) * (radiusSquared + 2.0 * x * x)
+            val tangentialY =
+                coefficient(coefficients, 2) * (radiusSquared + 2.0 * y * y) +
+                    2.0 * coefficient(coefficients, 3) * x * y
+            if (abs(radial) > RADIAL_DISTORTION_EPSILON) {
+                x = (distortedX - tangentialX) / radial
+                y = (distortedY - tangentialY) / radial
+            }
+        }
+        return NormalizedImagePoint(x, y)
     }
 
     /**
@@ -166,13 +169,15 @@ class TriangulationMath {
         val direction: Vector3,
     )
 
-    private fun cameraMatrix(frame: DetectionFrameSnapshotDto): Mat {
-        val cameraMatrix = Mat.eye(3, 3, CvType.CV_64F)
-        cameraMatrix.put(0, 0, frame.focalLengthX.toDouble())
-        cameraMatrix.put(1, 1, frame.focalLengthY.toDouble())
-        cameraMatrix.put(0, 2, frame.principalPointX.toDouble())
-        cameraMatrix.put(1, 2, frame.principalPointY.toDouble())
-        return cameraMatrix
+    /**
+     * Returns one distortion coefficient or zero when the camera does not provide it.
+     *
+     * @param coefficients camera distortion coefficients.
+     * @param index requested coefficient index.
+     * @return coefficient value or zero.
+     */
+    private fun coefficient(coefficients: List<Float>, index: Int): Double {
+        return coefficients.getOrNull(index)?.toDouble() ?: 0.0
     }
 
     private fun distanceConfidence(
@@ -193,7 +198,14 @@ class TriangulationMath {
     }
 }
 
+private data class NormalizedImagePoint(
+    val x: Double,
+    val y: Double,
+)
+
 private const val RAY_PARALLEL_EPSILON = 1e-6
+private const val RADIAL_DISTORTION_EPSILON = 1e-9
+private const val UNDISTORTION_ITERATIONS = 8
 private const val MIN_RAY_DEPTH_METERS = 0.1f
 private const val MAX_TRIANGULATION_DISTANCE_METERS = 10f
 private const val DISTANCE_CONFIDENCE_COEFFICIENT = 1.5f

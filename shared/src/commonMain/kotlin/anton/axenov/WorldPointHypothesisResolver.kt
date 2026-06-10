@@ -25,7 +25,7 @@ import kotlin.math.max
  */
 class WorldPointHypothesisResolver(
     private val minNormalizationConfidence: Float = 0.0f,
-    private val maxNormalizationConfidence: Float = 0.8f,
+    private val maxNormalizationConfidence: Float = 0.4f,
     private val clusterRadiusMeters: Float = DEFAULT_CLUSTER_RADIUS_METERS,
     private val conflictConfidenceThreshold: Float = DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD,
     private val replacementImprovementEpsilon: Float = DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON,
@@ -65,14 +65,14 @@ class WorldPointHypothesisResolver(
      * @param newWorldPoints raw triangulated points.
      * @return resolved dense components ordered by descending confidence.
      */
-    @Synchronized
     fun resolve(newWorldPoints: List<WorldPoint>): List<WorldPoint> {
         val normalizedPoints = normalize(newWorldPoints)
         worldPoints += normalizedPoints
         worldPointByObservations = buildWorldPointByObservations()
 
-        normalizedPoints.forEach { newPoint ->
+        normalizedPoints.sortedByDescending { it.confidence }.forEach { newPoint ->
             mergeNewPointIntoResolvedComponents(newPoint)?.let { component ->
+//                todo remove from normalized points too?
                 removeUsedObservations(component)
             }
         }
@@ -335,10 +335,10 @@ private fun sumConfidenceByEdges(points: List<WorldPoint>): Float {
     return points.map { it.confidence }.sum()
 }
 
-private const val DEFAULT_CLUSTER_RADIUS_METERS = 0.15f
+private const val DEFAULT_CLUSTER_RADIUS_METERS = 0.03f
 private const val DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD = 0.7f
-private const val MIN_COMPONENT_THRESHOLD = 0.5f
-private const val MIN_ADDITION_THRESHOLD = 0.3f
-private const val MIN_COMPONENT_SIZE = 3
+private const val MIN_COMPONENT_THRESHOLD = 0.75f
+private const val MIN_ADDITION_THRESHOLD = 0.5f
+private const val MIN_COMPONENT_SIZE = 4
 private const val DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON = 1e-4f
 private const val DEFAULT_MIN_SUPPORT_EDGES_FOR_REPLACEMENT = 2

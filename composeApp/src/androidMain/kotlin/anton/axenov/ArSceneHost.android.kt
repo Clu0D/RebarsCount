@@ -47,13 +47,12 @@ import com.google.ar.core.Config
 import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
+import anton.axenov.localServer.LocalClient
+import anton.axenov.localServer.PythonSegmentationPredictor
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.Json
 
 /**
  * Renders Android AR sample content.
@@ -163,21 +162,15 @@ actual fun ArSceneHost(
     val screenOverlayStore = remember { ScreenPolygonOverlayStore() }
     var screenOverlays by remember { mutableStateOf(emptyList<ScreenBoundingBoxOverlayEntry>()) }
     val coroutineScope = rememberCoroutineScope()
-    val segmentationServerBaseUrl = remember(context) {
-        context.getString(R.string.segmentation_server_base_url)
+    val pythonSegmentationServerBaseUrl = remember(context) {
+        context.getString(R.string.python_segmentation_server_base_url)
     }
-    val segmentationServerClient = remember(segmentationServerBaseUrl) {
-        SegmentationServerClient(
-            baseUrl = segmentationServerBaseUrl,
-            httpClient = HttpClient(OkHttp) {
-                install(ContentNegotiation) {
-                    json(
-                        Json {
-                            ignoreUnknownKeys = true
-                        },
-                    )
-                }
-            },
+    val segmentationClient = remember(pythonSegmentationServerBaseUrl) {
+        LocalClient(
+            predictor = PythonSegmentationPredictor(
+                baseUrl = pythonSegmentationServerBaseUrl,
+                httpClient = HttpClient(OkHttp),
+            ),
         )
     }
     val cameraDistortionProvider = remember(context) {
@@ -192,13 +185,13 @@ actual fun ArSceneHost(
         coroutineScope,
         statusReporter,
         screenOverlayStore,
-        segmentationServerClient,
+        segmentationClient,
     ) {
         ArDetectionPipeline(
             cameraDistortionProvider = cameraDistortionProvider,
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
-            segmentationServerClient = segmentationServerClient,
+            segmentationServerClient = segmentationClient,
             isZoneAdditionEnabled = {
                 latestInterfaceControlState.value.isZoneAdditionEnabled
             },
@@ -246,17 +239,17 @@ actual fun ArSceneHost(
         }
     }
 
-    LaunchedEffect(segmentationServerClient) {
+    LaunchedEffect(segmentationClient) {
         serverText = runCatching {
-            "Server: ${segmentationServerClient.requestHealth()}"
+            "Local processing: ${segmentationClient.requestHealth()}"
         }.getOrElse { error ->
             "Server: ${error.message ?: error.javaClass.simpleName}"
         }
     }
 
-    DisposableEffect(segmentationServerClient) {
+    DisposableEffect(segmentationClient) {
         onDispose {
-            segmentationServerClient.close()
+            segmentationClient.close()
         }
     }
 

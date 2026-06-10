@@ -17,7 +17,6 @@ application {
 
 dependencies {
     implementation(projects.shared)
-    implementation(libs.opencv)
     implementation(libs.logback)
     implementation(libs.ktor.clientContentNegotiation)
     implementation(libs.ktor.clientOkHttp)
@@ -26,7 +25,6 @@ dependencies {
     implementation(libs.ktor.serverContentNegotiation)
     implementation(libs.ktor.serverNetty)
     implementation(libs.ktor.serverSerializationKotlinxJson)
-    testImplementation(libs.opencv)
     testImplementation(libs.ktor.clientContentNegotiation)
     testImplementation(libs.ktor.clientMock)
     testImplementation(libs.ktor.serializationKotlinxJson)

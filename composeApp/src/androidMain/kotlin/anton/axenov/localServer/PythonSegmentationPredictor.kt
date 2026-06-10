@@ -1,7 +1,8 @@
-package anton.axenov
+package anton.axenov.localServer
 
+import anton.axenov.SegmentationPrediction
+import anton.axenov.SegmentationPredictionProvider
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.statement.bodyAsText
@@ -9,45 +10,40 @@ import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
-import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 /**
- * Predicts segmentation for one image by calling external Python service.
+ * Temporary Android prediction adapter that forwards images directly to Python.
  *
- * @param baseUrl Python server base URL.
+ * @param baseUrl Python service base URL.
  * @param httpClient HTTP client used for multipart requests.
  */
-class SegmentationPredictor(
-    private val baseUrl: String = PYTHON_SEGMENTATION_SERVER_URL,
-    private val httpClient: HttpClient = HttpClient {
-        install(ContentNegotiation) {
-            json(
-                Json {
-                    ignoreUnknownKeys = true
-                },
-            )
-        }
-    },
+class PythonSegmentationPredictor(
+    baseUrl: String,
+    private val httpClient: HttpClient,
 ) : SegmentationPredictionProvider {
+    private val normalizedBaseUrl = baseUrl.trimEnd('/')
+    private val json = Json {
+        ignoreUnknownKeys = true
+    }
+
     /**
-     * Sends one image to Python predictor.
+     * Sends one image directly to the temporary Python prediction service.
      *
-     * @param imageBytes PNG bytes to predict.
-     * @param filename logical source filename.
-     * @return segmentation prediction result.
+     * @param imageBytes PNG image bytes.
+     * @param filename logical image filename.
+     * @param zonePrediction true for zone detection and false for point detection.
+     * @return decoded segmentation prediction.
      */
     override suspend fun predict(
         imageBytes: ByteArray,
         filename: String,
         zonePrediction: Boolean,
     ): SegmentationPrediction {
-        val url = if (zonePrediction)
-            "$baseUrl/predict_zones"
-        else
-            "$baseUrl/predict_points"
+        val endpoint = if (zonePrediction) "predict_zones" else "predict_points"
         val response = httpClient.submitFormWithBinaryData(
-            url = url,
+            url = "$normalizedBaseUrl/$endpoint",
             formData = formData {
                 append(
                     key = "file",
@@ -62,31 +58,30 @@ class SegmentationPredictor(
                 )
             },
         )
-        if (!response.status.isSuccess()) {
-            error("Python segmentation failed: ${response.status.value} ${response.bodyAsText()}")
-        }
         val responseBody = response.bodyAsText()
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException(
+                "Python segmentation failed: HTTP ${response.status.value}: " +
+                    responseBody.take(MAX_ERROR_BODY_LENGTH),
+            )
+        }
         return try {
-            predictorJson.decodeFromString(responseBody)
+            json.decodeFromString(responseBody)
         } catch (error: Exception) {
             throw IllegalStateException(
                 "Python segmentation returned invalid JSON: " +
-                        responseBody.take(MAX_PREDICTOR_ERROR_BODY_LENGTH),
+                    responseBody.take(MAX_ERROR_BODY_LENGTH),
                 error,
             )
         }
     }
 
     /**
-     * Releases owned HTTP client resources.
+     * Releases the HTTP client.
      */
     override fun close() {
         httpClient.close()
     }
 }
 
-private val predictorJson = Json {
-    ignoreUnknownKeys = true
-}
-private const val MAX_PREDICTOR_ERROR_BODY_LENGTH = 2_000
-private const val PYTHON_SEGMENTATION_SERVER_URL = "http://127.0.0.1:8001"
+private const val MAX_ERROR_BODY_LENGTH = 2_000

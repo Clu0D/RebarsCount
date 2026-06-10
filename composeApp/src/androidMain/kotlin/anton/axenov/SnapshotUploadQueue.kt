@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  */
 class SnapshotUploadQueue(
     private val coroutineScope: CoroutineScope,
-    private val segmentationServerClient: SegmentationServerClient,
+    private val segmentationServerClient: SegmentationClient,
     private val workerCount: Int = DEFAULT_UPLOAD_WORKER_COUNT,
     private val onQueueInfoChanged: (String) -> Unit = {},
     private val onUploadFailure: (zoneId: Long, error: Throwable) -> Unit = { _, _ -> },

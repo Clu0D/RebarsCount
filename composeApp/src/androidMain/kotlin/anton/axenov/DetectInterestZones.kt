@@ -7,7 +7,7 @@ package anton.axenov
  * @param segmentationServerClient client used to request server-side zone prediction.
  */
 class DetectInterestZones(
-    private val segmentationServerClient: SegmentationServerClient,
+    private val segmentationServerClient: SegmentationClient,
 ) {
     /**
      * Detects zones of interest on a screenshot.

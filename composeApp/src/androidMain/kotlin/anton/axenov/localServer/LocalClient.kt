@@ -1,0 +1,89 @@
+package anton.axenov.localServer
+
+import anton.axenov.DetectionFrameSnapshotDto
+import anton.axenov.SegmentationClient
+import anton.axenov.SegmentationPrediction
+import anton.axenov.SegmentationPredictionProvider
+import anton.axenov.SegmentationSessionProcessor
+import anton.axenov.ServerHealthResponse
+import anton.axenov.ServerWorldPointDto
+import anton.axenov.SnapshotUploadResponse
+import anton.axenov.ZoneSnapshotUploadDto
+import anton.axenov.ZoneStatus
+
+/**
+ * On-device segmentation client backed by the shared session-processing engine.
+ *
+ * Only raw image prediction is delegated to the supplied provider. Queueing,
+ * statuses, triangulation and reconstructed result storage run on the phone.
+ *
+ * @param predictor current on-device or temporary remote prediction adapter.
+ */
+class LocalClient(
+    predictor: SegmentationPredictionProvider,
+) : SegmentationClient {
+    private val processor = SegmentationSessionProcessor(predictor)
+
+    /**
+     * Returns local processor health.
+     *
+     * @return local processor health response.
+     */
+    override suspend fun requestHealth(): ServerHealthResponse {
+        return processor.requestHealth()
+    }
+
+    /**
+     * Clears local session state.
+     *
+     * @return session reset response.
+     */
+    override suspend fun startNewSession(): ServerHealthResponse {
+        return processor.startNewSession()
+    }
+
+    /**
+     * Queues one snapshot for on-device point processing.
+     *
+     * @param payload zone snapshot payload.
+     * @return queue acceptance response.
+     */
+    override suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
+        return processor.predictPoints(payload)
+    }
+
+    /**
+     * Detects zones through the current local prediction provider.
+     *
+     * @param frameSnapshot frame to predict.
+     * @return segmentation prediction.
+     */
+    override suspend fun predictZones(frameSnapshot: DetectionFrameSnapshotDto): SegmentationPrediction {
+        return processor.predictZones(frameSnapshot)
+    }
+
+    /**
+     * Returns local zone processing statuses.
+     *
+     * @return zone statuses.
+     */
+    override suspend fun fetchZoneStatuses(): List<ZoneStatus> {
+        return processor.fetchZoneStatuses()
+    }
+
+    /**
+     * Returns points reconstructed on the phone.
+     *
+     * @return reconstructed world points.
+     */
+    override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
+        return processor.fetchWorldPoints()
+    }
+
+    /**
+     * Releases local processing resources.
+     */
+    override fun close() {
+        processor.close()
+    }
+}

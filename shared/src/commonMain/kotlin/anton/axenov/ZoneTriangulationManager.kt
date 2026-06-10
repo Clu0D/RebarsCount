@@ -50,7 +50,7 @@ class ZoneTriangulationManager(
     private val triangulationMath: TriangulationMath = TriangulationMath(),
     private val defaultEpsilonMeters: Double = DEFAULT_CORRESPONDENCE_EPSILON_METERS,
 ) {
-    private val worldPointHypothesisResolvers: MutableMap<Zone, WorldPointHypothesisResolver> = mutableMapOf()
+    private val worldPointHypothesisResolversByZoneId: MutableMap<Long, WorldPointHypothesisResolver> = mutableMapOf()
 
     private val segmentationResults = mutableListOf<ZoneSegmentation>()
 
@@ -62,7 +62,7 @@ class ZoneTriangulationManager(
     fun getResolvedWorldPoints(): List<WorldPoint> {
         val resolvedWorldPoints = mutableListOf<WorldPoint>()
 
-        worldPointHypothesisResolvers.forEach { (_, resolver) ->
+        worldPointHypothesisResolversByZoneId.forEach { (_, resolver) ->
             resolvedWorldPoints.addAll(resolver.resolvedComponents.map { it.toWorldPoint() })
         }
         return resolvedWorldPoints.toList()
@@ -157,7 +157,7 @@ class ZoneTriangulationManager(
      * Rebuilds resolved multi-view point centers from all currently accumulated 2-view WorldPoints.
      */
     private fun resolveWorldPoints(zone: Zone, newPoints: MutableList<WorldPoint>) {
-        val resolver = worldPointHypothesisResolvers.getOrPut(zone) { WorldPointHypothesisResolver() }
+        val resolver = worldPointHypothesisResolversByZoneId.getOrPut(zone.id) { WorldPointHypothesisResolver() }
         resolver.resolve(newPoints)
     }
 }

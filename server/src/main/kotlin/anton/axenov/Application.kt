@@ -1,5 +1,6 @@
 package anton.axenov
 
+import anton.axenov.SegmentationSessionProcessor
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -16,9 +17,13 @@ import io.ktor.serialization.kotlinx.KotlinxSerializationConverter
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 
-private val segmentationQueue = SegmentationQueue()
+private var segmentationProcessor = SegmentationSessionProcessor(
+    predictor = SegmentationPredictor(),
+    onSnapshotAccepted = SnapshotDebugStore()::savePredictPointsSnapshot,
+)
 private val serverJson = Json {
     ignoreUnknownKeys = true
     prettyPrint = true
@@ -28,7 +33,9 @@ private val serverJson = Json {
  * Clears in-memory server state.
  */
 fun resetServerState() {
-    segmentationQueue.clear()
+    runBlocking {
+        segmentationProcessor.clear()
+    }
 }
 
 fun main() {
@@ -42,7 +49,11 @@ fun main() {
 fun Application.module(
     predictor: SegmentationPredictor = SegmentationPredictor(),
 ) {
-    segmentationQueue.configure(predictor)
+    segmentationProcessor.close()
+    segmentationProcessor = SegmentationSessionProcessor(
+        predictor = predictor,
+        onSnapshotAccepted = SnapshotDebugStore()::savePredictPointsSnapshot,
+    )
     val jsonConverter = KotlinxSerializationConverter(serverJson)
     install(ContentNegotiation) {
         register(ContentType.Application.Json, jsonConverter)
@@ -61,25 +72,13 @@ fun Application.module(
 
         post("/predict_points") {
             val payload = call.receive<ZoneSnapshotUploadDto>()
-            val snapshotCount = segmentationQueue.addSnapshot(payload)
-            call.respond(
-                SnapshotUploadResponse(
-                    ok = true,
-                    zoneId = payload.zone.id,
-                    snapshotCount = snapshotCount,
-                    message = "stored snapshot for zone ${payload.zone.id} and queued segmentation",
-                ),
-            )
+            call.respond(segmentationProcessor.predictPoints(payload))
         }
 
         post("/predict_zones") {
             val payload = call.receive<DetectionFrameSnapshotDto>()
             val prediction = try {
-                predictor.predict(
-                    imageBytes = payload.screenshotPngBytes,
-                    filename = "${payload.frameTimestamp}-zones-seg.png",
-                    zonePrediction = true,
-                )
+                segmentationProcessor.predictZones(payload)
             } catch (error: Exception) {
                 if (error is CancellationException) {
                     throw error
@@ -98,26 +97,20 @@ fun Application.module(
         }
 
         get("/zone-statuses") {
-            call.respond(segmentationQueue.getZoneStatuses())
+            call.respond(segmentationProcessor.fetchZoneStatuses())
         }
 
         get("/world-points") {
-            call.respond(segmentationQueue.getAllWorldPoints())
+            call.respond(segmentationProcessor.fetchWorldPoints())
         }
 
         post("/start_new_session") {
-            resetServerState()
-            call.respond(
-                ServerHealthResponse(
-                    ok = true,
-                    message = "Started new session and cleared server state",
-                ),
-            )
+            call.respond(segmentationProcessor.startNewSession())
         }
     }
 
     monitor.subscribe(io.ktor.server.application.ApplicationStopped) {
-        log.info("Stopping segmentation queue")
-        segmentationQueue.stop()
+        log.info("Stopping segmentation processor")
+        segmentationProcessor.close()
     }
 }

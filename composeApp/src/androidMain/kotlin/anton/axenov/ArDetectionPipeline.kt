@@ -41,7 +41,7 @@ class ArDetectionPipeline(
     private val cameraDistortionProvider: ArCameraDistortionProvider,
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
-    private val segmentationServerClient: SegmentationServerClient,
+    private val segmentationServerClient: SegmentationClient,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(segmentationServerClient),
     private val isZoneAdditionEnabled: () -> Boolean = { true },
     private val isPointRecognitionEnabled: () -> Boolean = { true },

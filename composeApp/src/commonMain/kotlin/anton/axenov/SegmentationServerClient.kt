@@ -11,7 +11,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.core.Closeable
 
 /**
  * Client for talking with segmentation server.
@@ -22,7 +21,7 @@ import io.ktor.utils.io.core.Closeable
 class SegmentationServerClient(
     baseUrl: String,
     private val httpClient: HttpClient,
-) : Closeable {
+) : SegmentationClient {
     private val normalizedBaseUrl = baseUrl.trimEnd('/')
 
     /**
@@ -30,7 +29,7 @@ class SegmentationServerClient(
      *
      * @return health response.
      */
-    suspend fun requestHealth(): ServerHealthResponse {
+    override suspend fun requestHealth(): ServerHealthResponse {
         return httpClient
             .get("$normalizedBaseUrl/health")
             .bodyOrThrow("Health request")
@@ -41,7 +40,7 @@ class SegmentationServerClient(
      *
      * @return server response confirming session reset.
      */
-    suspend fun startNewSession(): ServerHealthResponse {
+    override suspend fun startNewSession(): ServerHealthResponse {
         return httpClient
             .post("$normalizedBaseUrl/start_new_session") {
                 contentType(ContentType.Application.Json)
@@ -55,7 +54,7 @@ class SegmentationServerClient(
      * @param payload serializable snapshot payload.
      * @return upload response.
      */
-    suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
+    override suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
         return httpClient
             .post("$normalizedBaseUrl/predict_points") {
                 accept(ContentType.Application.Json)
@@ -71,7 +70,7 @@ class SegmentationServerClient(
      * @param frameSnapshot screenshot payload to analyze.
      * @return detected interest zones.
      */
-    suspend fun predictZones(frameSnapshot: DetectionFrameSnapshotDto): SegmentationPrediction {
+    override suspend fun predictZones(frameSnapshot: DetectionFrameSnapshotDto): SegmentationPrediction {
         return httpClient
             .post("$normalizedBaseUrl/predict_zones") {
                 accept(ContentType.Application.Json)
@@ -86,7 +85,7 @@ class SegmentationServerClient(
      *
      * @return current statuses for known zones.
      */
-    suspend fun fetchZoneStatuses(): List<ZoneStatus> {
+    override suspend fun fetchZoneStatuses(): List<ZoneStatus> {
         return httpClient
             .get("$normalizedBaseUrl/zone-statuses")
             .bodyOrThrow("Fetching zone statuses")
@@ -97,7 +96,7 @@ class SegmentationServerClient(
      *
      * @return world points currently known by the server.
      */
-    suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
+    override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return httpClient
             .get("$normalizedBaseUrl/world-points")
             .bodyOrThrow("Fetching world points")
@@ -108,7 +107,7 @@ class SegmentationServerClient(
      *
      * @return map of zone id to server text.
      */
-    suspend fun fetchZoneTexts(): Map<Long, String> {
+    override suspend fun fetchZoneTexts(): Map<Long, String> {
         return fetchZoneStatuses()
             .associate { status -> status.zone to status.text }
     }
