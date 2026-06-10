@@ -10,6 +10,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * Triangulated world-space point derived from corresponding 2D segmentation points.
@@ -35,6 +37,7 @@ class SegmentationSessionProcessor(
     private val predictor: SegmentationPredictionProvider,
     private val workerCount: Int = DEFAULT_SEGMENTATION_WORKER_COUNT,
     private val onSnapshotAccepted: (filename: String, payload: ZoneSnapshotUploadDto) -> Unit = { _, _ -> },
+    private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
 ) : SegmentationClient {
     private val stateMutex = Mutex()
     private val snapshotsByZoneId = mutableMapOf<Long, MutableList<StoredSnapshotRecord>>()
@@ -42,6 +45,10 @@ class SegmentationSessionProcessor(
     private var queue = Channel<QueuedSegmentationTask>(Channel.UNLIMITED)
     private var scope = newProcessorScope()
     private val workerJobs = mutableListOf<Job>()
+    private var assignedWorldPointsCache = emptyList<AssignedWorldPoint>()
+    private var hasPendingZoneSeparation = false
+    private var hasZoneSeparationRun = false
+    private var lastZoneSeparationAt = timeSource.markNow()
 
     init {
         startWorkers()
@@ -110,13 +117,8 @@ class SegmentationSessionProcessor(
 
     override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return stateMutex.withLock {
-            val zones = snapshotsByZoneId.values
-                .mapNotNull { snapshots -> snapshots.firstOrNull()?.snapshot?.zone }
-                .distinctBy { zone -> zone.id }
-                .sortedBy { zone -> zone.id }
-            val worldPoints = triangulationManagersByZoneId.values
-                .flatMap { manager -> manager.getResolvedWorldPoints() }
-            assignWorldPointsToZones(worldPoints, zones).map { assignedWorldPoint ->
+            refreshAssignedWorldPointsIfNeeded()
+            assignedWorldPointsCache.map { assignedWorldPoint ->
                 ServerWorldPointDto(
                     zoneId = assignedWorldPoint.zoneId,
                     position = assignedWorldPoint.worldPoint.position,
@@ -141,6 +143,10 @@ class SegmentationSessionProcessor(
         stateMutex.withLock {
             snapshotsByZoneId.clear()
             triangulationManagersByZoneId.clear()
+            assignedWorldPointsCache = emptyList()
+            hasPendingZoneSeparation = false
+            hasZoneSeparationRun = false
+            lastZoneSeparationAt = timeSource.markNow()
             restartWorkers()
         }
     }
@@ -184,6 +190,7 @@ class SegmentationSessionProcessor(
                     frameSnapshot = task.record.snapshot.frameSnapshot,
                     prediction = prediction,
                 )
+                hasPendingZoneSeparation = true
             }
         }.onFailure { error ->
             stateMutex.withLock {
@@ -204,6 +211,33 @@ class SegmentationSessionProcessor(
         queue = Channel<QueuedSegmentationTask>(Channel.UNLIMITED)
         scope = newProcessorScope()
         startWorkers()
+    }
+
+    /**
+     * Rebuilds cached zone assignments only when new frame data appeared and the throttle allows it.
+     */
+    private fun refreshAssignedWorldPointsIfNeeded() {
+        val shouldRecompute = when {
+            !hasZoneSeparationRun -> true
+            !hasPendingZoneSeparation -> false
+            assignedWorldPointsCache.isEmpty() -> true
+            lastZoneSeparationAt.elapsedNow() >= ZONE_SEPARATION_INTERVAL -> true
+            else -> false
+        }
+        if (!shouldRecompute) {
+            return
+        }
+
+        val zones = snapshotsByZoneId.values
+            .mapNotNull { snapshots -> snapshots.firstOrNull()?.snapshot?.zone }
+            .distinctBy { zone -> zone.id }
+            .sortedBy { zone -> zone.id }
+        val worldPoints = triangulationManagersByZoneId.values
+            .flatMap { manager -> manager.getResolvedWorldPoints() }
+        assignedWorldPointsCache = assignWorldPointsToZones(worldPoints, zones)
+        hasPendingZoneSeparation = false
+        hasZoneSeparationRun = true
+        lastZoneSeparationAt = timeSource.markNow()
     }
 }
 
@@ -228,3 +262,4 @@ private fun newProcessorScope(): CoroutineScope {
 }
 
 private const val DEFAULT_SEGMENTATION_WORKER_COUNT = 3
+private val ZONE_SEPARATION_INTERVAL = 10.seconds

@@ -1,5 +1,6 @@
 package anton.axenov
 
+import android.graphics.Color as AndroidColor
 import com.google.android.filament.MaterialInstance
 import com.google.ar.core.Anchor
 import com.google.ar.core.exceptions.FatalException
@@ -91,7 +92,6 @@ fun drawSnapshotCameraDirectionNode(
  *
  * @param sceneView active SceneView.
  * @param worldPoints world-space points to visualize.
- * @param color point marker color.
  * @return created anchor nodes, one per point.
  */
 fun createWorldPointMarkerNodes(
@@ -127,6 +127,7 @@ fun createServerWorldPointMarkerNodes(
     val session = sceneView.session ?: return emptyList()
     return worldPoints.mapNotNull { worldPoint ->
         val confidence = worldPoint.confidence.coerceIn(0f, 1f)
+        val markerColor = worldPointMarkerColor(worldPoint.zoneId, confidence)
         val anchor = createTranslationAnchor(
             session = session,
             worldPoint = worldPoint.position,
@@ -138,10 +139,10 @@ fun createServerWorldPointMarkerNodes(
                     (SERVER_POINT_MARKER_MAX_SIZE_METERS - SERVER_POINT_MARKER_MIN_SIZE_METERS) * confidence,
             materialInstance = getUnlitMaterial(
                 sceneView,
-                0f,
-                1f,
-                0f,
-                confidence
+                markerColor.red,
+                markerColor.green,
+                markerColor.blue,
+                markerColor.alpha,
             ),
         )
     }
@@ -196,7 +197,7 @@ fun createPolygonMarkerNodes(
  * @param sceneView active SceneView.
  * @param anchor anchor positioned at point coordinates.
  * @param markerSizeMeters full marker size in meters.
- * @param color point marker color.
+ * @param materialInstance point marker material instance.
  * @return created anchor node.
  */
 private fun createWorldPointMarkerAnchorNode(
@@ -346,6 +347,49 @@ private fun getUnlitMaterial(sceneView: ARSceneView, r: Float, g: Float, b: Floa
     }
     return instance
 }
+
+/**
+ * Builds one stable pseudo-random zone hue and modulates brightness and alpha by point confidence.
+ *
+ * @param zoneId final assigned zone identifier.
+ * @param confidence reconstructed point confidence.
+ * @return normalized marker color.
+ */
+private fun worldPointMarkerColor(
+    zoneId: Long,
+    confidence: Float,
+): MarkerColor {
+    val boundedConfidence = confidence.coerceIn(0f, 1f)
+    val hue = (((zoneId % 360L).toFloat() * 137f) % 360f + 360f) % 360f
+    val argb = AndroidColor.HSVToColor(
+        floatArrayOf(
+            hue,
+            0.55f + 0.4f * boundedConfidence,
+            0.35f + 0.65f * boundedConfidence,
+        ),
+    )
+    return MarkerColor(
+        red = AndroidColor.red(argb) / 255f,
+        green = AndroidColor.green(argb) / 255f,
+        blue = AndroidColor.blue(argb) / 255f,
+        alpha = 0.25f + 0.75f * boundedConfidence,
+    )
+}
+
+/**
+ * Normalized RGBA color for one rendered marker.
+ *
+ * @param red red channel.
+ * @param green green channel.
+ * @param blue blue channel.
+ * @param alpha alpha channel.
+ */
+private data class MarkerColor(
+    val red: Float,
+    val green: Float,
+    val blue: Float,
+    val alpha: Float,
+)
 
 /**
  * Builds a normalized quaternion that rotates the positive X axis onto [direction].
