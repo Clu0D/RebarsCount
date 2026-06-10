@@ -75,6 +75,7 @@ class ArDetectionPipeline(
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private val renderedSnapshotNodesByZone = IdentityHashMap<Zone, IdentityHashMap<ZoneSnapshot, AnchorNode>>()
     private val renderedServerWorldPointNodes = mutableListOf<AnchorNode>()
+    private val frameQualityFilter = FrameImageQualityFilter()
     private var lastServerWorldPoints: List<ServerWorldPointDto> = emptyList()
     private var detectionJob: Job? = null
     private var serverStatusJob: Job? = null
@@ -86,6 +87,8 @@ class ArDetectionPipeline(
     private var lastServerStatusRefreshAtMs = 0L
     private var lastCaptureFailureAtMs = 0L
     private var lastDepthUnavailableLogAtMs = 0L
+    private var lastFrameFilterSkipLogAtMs = 0L
+    private var lastFrameFilterForcedLogAtMs = 0L
     private var asyncPlacementNoticeShown = false
     private var lastTrackingState: TrackingState? = null
     private var lastStatusAtMs = 0L
@@ -151,8 +154,14 @@ class ArDetectionPipeline(
         lastServerWorldPoints = emptyList()
         baselineLandscapeRotation = null
         currentSession = null
+        frameQualityFilter.reset()
     }
 
+    /**
+     * Stores the current ARCore session for later access to camera calibration.
+     *
+     * @param session configured ARCore session.
+     */
     fun onSessionConfigured(session: Session) {
         currentSession = session
     }
@@ -203,6 +212,17 @@ class ArDetectionPipeline(
             return
         }
 
+        val canStoreZoneSnapshots = (isPointRecognitionEnabled() ||
+            (processingMode == ProcessingMode.DEFERRED && isFrameSavingEnabled())) &&
+            !isFullResultVisible() &&
+            zonesManager.getPlacedZones().isNotEmpty()
+        val shouldRefreshMetrics = now - lastMetricsLabelRefreshAtMs >= METRICS_LABEL_REFRESH_INTERVAL_MS
+        val shouldStoreZoneSnapshots = shouldRefreshMetrics && canStoreZoneSnapshots
+        val shouldRunZoneDetection = isZoneAdditionEnabled() &&
+            !isFullResultVisible() &&
+            now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
+            detectionJob?.isActive != true
+
         if (now - lastMetricsLabelRefreshAtMs >= METRICS_LABEL_REFRESH_INTERVAL_MS) {
             lastMetricsLabelRefreshAtMs = now
             val cameraPose = frame.camera.pose
@@ -228,17 +248,33 @@ class ArDetectionPipeline(
                 screenHeight = activeSceneView.height,
                 worldPointProjector = worldPointProjector,
             )
-            if ((isPointRecognitionEnabled() ||
-                    (processingMode == ProcessingMode.DEFERRED && isFrameSavingEnabled())) &&
-                !isFullResultVisible()
-            ) {
-                addZoneSnapshots(
+            if (shouldStoreZoneSnapshots || shouldRunZoneDetection) {
+                val snapshot = captureFilteredFrameSnapshot(
                     frame = frame,
-                    cameraPosition = cameraPosition,
-                    screenWidth = activeSceneView.width,
-                    screenHeight = activeSceneView.height,
-                    worldPointProjector = worldPointProjector,
+                    distortionCoefficients = distortionCoefficients,
+                    nowElapsedMs = now,
+                    shouldReportCaptureFailure = shouldRunZoneDetection,
                 )
+                if (snapshot != null) {
+                    if (shouldStoreZoneSnapshots) {
+                        addZoneSnapshots(
+                            frameSnapshot = snapshot,
+                            cameraPosition = cameraPosition,
+                            screenWidth = activeSceneView.width,
+                            screenHeight = activeSceneView.height,
+                            worldPointProjector = worldPointProjector,
+                        )
+                    }
+                    if (shouldRunZoneDetection) {
+                        lastDetectionAtMs = now
+                        detectionJob = launchZoneDetection(
+                            snapshot = snapshot,
+                            activeSceneView = activeSceneView,
+                        )
+                    } else {
+                        snapshot.screenshot.recycle()
+                    }
+                }
             }
         }
 
@@ -249,140 +285,18 @@ class ArDetectionPipeline(
 
         publishZoneScreenLabels()
 
-        if (isZoneAdditionEnabled() &&
-            !isFullResultVisible() &&
-            now - lastDetectionAtMs >= DETECTION_INTERVAL_MS &&
-            detectionJob?.isActive != true
-        ) {
-            val captureResult = captureDetectionFrameSnapshot(
+        if (shouldRunZoneDetection && !shouldRefreshMetrics) {
+            val snapshot = captureFilteredFrameSnapshot(
                 frame = frame,
                 distortionCoefficients = distortionCoefficients,
+                nowElapsedMs = now,
+                shouldReportCaptureFailure = true,
+            ) ?: return
+            lastDetectionAtMs = now
+            detectionJob = launchZoneDetection(
+                snapshot = snapshot,
+                activeSceneView = activeSceneView,
             )
-            val snapshot = captureResult.snapshot
-            if (snapshot != null) {
-                if (snapshot.depthSnapshot == null &&
-                    now - lastDepthUnavailableLogAtMs >= CAPTURE_FAILURE_REPORT_INTERVAL_MS
-                ) {
-                    lastDepthUnavailableLogAtMs = now
-                    reportStatus("Detection snapshot captured without depth: ${captureResult.details}", true)
-                }
-                lastDetectionAtMs = now
-                detectionJob = coroutineScope.launch(Dispatchers.Default) {
-                    try {
-                        try {
-                            val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
-                                Surface.ROTATION_90,
-                                Surface.ROTATION_270,
-                                    -> {
-                                    val baseline = baselineLandscapeRotation
-                                    if (baseline == null) {
-                                        baselineLandscapeRotation = displayRotation
-                                        CoordinateTranslationVariant.LANDSCAPE
-                                    } else if (displayRotation == baseline) {
-                                        CoordinateTranslationVariant.LANDSCAPE
-                                    } else {
-                                        CoordinateTranslationVariant.LANDSCAPE_REVERSED
-                                    }
-                                }
-
-                                else -> CoordinateTranslationVariant.PORTRAIT
-                            }
-                            if (translationVariant != lastTranslationVariant) {
-                                lastTranslationVariant = translationVariant
-                            }
-                            onTranslationInfoChanged(
-                                TranslationOverlayInfo(
-                                    translationVariant = translationVariant,
-                                    imageWidth = snapshot.imageWidth,
-                                    imageHeight = snapshot.imageHeight,
-                                    viewWidth = activeSceneView.width,
-                                    viewHeight = activeSceneView.height,
-                                ),
-                            )
-                            val detectedZones = zoneDetector.detectZones(snapshot)
-                            withContext(Dispatchers.Main.immediate) {
-                                if (detectedZones.isEmpty()) {
-                                    reportStatus("No interest zones detected", false)
-                                    return@withContext
-                                }
-                                onZonesDetected(snapshot, detectedZones)
-                                if (!isSceneActive.get() || sceneView !== activeSceneView) {
-                                    reportStatus(
-                                        "Zone placement skipped: scene was recreated/disposed during async detection.",
-                                        false,
-                                    )
-                                    return@withContext
-                                }
-
-                                detectedZones.forEachIndexed { index, detectedZone ->
-                                    if (!isSceneActive.get() || sceneView !== activeSceneView) {
-                                        reportStatus(
-                                            "Zone placement stopped: scene was recreated/disposed during async detection.",
-                                            false,
-                                        )
-                                        return@forEachIndexed
-                                    }
-
-                                    val placementResult = runCatching {
-                                        placeZoneInWorld(
-                                            sceneView = activeSceneView,
-                                            snapshot = snapshot,
-                                            detectedZone = detectedZone,
-                                            translationVariant = translationVariant,
-                                        )
-                                    }.getOrElse { error ->
-                                        ZonePlacementResult(
-                                            zone = null,
-                                            details =
-                                                "Placement aborted: ${error.javaClass.simpleName}: " +
-                                                        (error.message ?: "unknown error"),
-                                        )
-                                    }
-                                    if (placementResult.zone != null) {
-                                        zonesManager.addZones(listOf(placementResult.zone))
-                                        val mergeInfo = zonesManager.consumeMergeDebugInfos()
-                                        val mergeMessage = "Merge debug: $mergeInfo"
-                                        onMergeInfoChanged(mergeMessage)
-                                        reportStatus(
-                                            mergeMessage,
-                                            true,
-                                        )
-                                        removeQueuedZonesFromWorld()
-                                        reportStatus(
-                                            "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
-                                                    "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
-                                            true,
-                                        )
-                                    } else {
-                                        reportStatus(
-                                            "Zone ${index + 1}/${detectedZones.size} placement failed. ${placementResult.details}",
-                                            true,
-                                        )
-                                    }
-                                }
-                                reportStatus(
-                                    "Processed ${detectedZones.size} detected zone(s) from frame ts=${snapshot.frameTimestamp}",
-                                    true,
-                                )
-                            }
-                        } catch (error: CancellationException) {
-                            throw error
-                        } catch (error: Exception) {
-                            withContext(Dispatchers.Main.immediate) {
-                                reportStatus(
-                                    "Zone detection failed: ${error.message ?: error.javaClass.simpleName}",
-                                    true,
-                                )
-                            }
-                        }
-                    } finally {
-                        snapshot.screenshot.recycle()
-                    }
-                }
-            } else if (now - lastCaptureFailureAtMs >= CAPTURE_FAILURE_REPORT_INTERVAL_MS) {
-                lastCaptureFailureAtMs = now
-                reportStatus("Detection snapshot skipped: ${captureResult.details}", false)
-            }
         }
     }
 
@@ -544,14 +458,14 @@ class ArDetectionPipeline(
     /**
      * Captures camera image for current frame and stores per-zone snapshots by angular uniqueness.
      *
-     * @param frame current ARCore frame.
+     * @param frameSnapshot accepted frame snapshot shared by all zone-save attempts.
      * @param cameraPosition current camera world position.
      * @param screenWidth current view width.
      * @param screenHeight current view height.
      * @param worldPointProjector current world-to-screen projector.
      */
     private fun addZoneSnapshots(
-        frame: Frame,
+        frameSnapshot: DetectionFrameSnapshot,
         cameraPosition: Vector3,
         screenWidth: Int,
         screenHeight: Int,
@@ -561,21 +475,200 @@ class ArDetectionPipeline(
         if (zones.isEmpty()) {
             return
         }
+        zones.forEach { zone ->
+            val captureAngle = getZoneCaptureAngle(zone.planePose, cameraPosition)
+            val screenCoverage = getZoneScreenCoverage(zone, screenWidth, screenHeight, worldPointProjector)
+            snapshotsManager.addSnapshot(zone, frameSnapshot, captureAngle, screenCoverage)
+        }
+    }
+
+    /**
+     * Captures one frame snapshot and rejects obviously bad images before any downstream work starts.
+     *
+     * @param frame current ARCore frame.
+     * @param distortionCoefficients camera distortion coefficients for this frame.
+     * @param nowElapsedMs current elapsed realtime.
+     * @param shouldReportCaptureFailure true when capture failures should be surfaced to the user.
+     * @return accepted frame snapshot or null when capture/filtering failed.
+     */
+    private fun captureFilteredFrameSnapshot(
+        frame: Frame,
+        distortionCoefficients: List<Float>,
+        nowElapsedMs: Long,
+        shouldReportCaptureFailure: Boolean,
+    ): DetectionFrameSnapshot? {
         val captureResult = captureDetectionFrameSnapshot(
             frame = frame,
-            distortionCoefficients = currentSession
-                ?.let(cameraDistortionProvider::distortionCoefficients)
-                .orEmpty(),
+            distortionCoefficients = distortionCoefficients,
         )
-        val snapshot = captureResult.snapshot ?: return
-        try {
-            zones.forEach { zone ->
-                val captureAngle = getZoneCaptureAngle(zone.planePose, cameraPosition)
-                val screenCoverage = getZoneScreenCoverage(zone, screenWidth, screenHeight, worldPointProjector)
-                snapshotsManager.addSnapshot(zone, snapshot, captureAngle, screenCoverage)
+        val snapshot = captureResult.snapshot ?: run {
+            if (shouldReportCaptureFailure && nowElapsedMs - lastCaptureFailureAtMs >= CAPTURE_FAILURE_REPORT_INTERVAL_MS) {
+                lastCaptureFailureAtMs = nowElapsedMs
+                reportStatus("Detection snapshot skipped: ${captureResult.details}", false)
             }
-        } finally {
+            return null
+        }
+
+        if (snapshot.depthSnapshot == null &&
+            shouldReportCaptureFailure &&
+            nowElapsedMs - lastDepthUnavailableLogAtMs >= CAPTURE_FAILURE_REPORT_INTERVAL_MS
+        ) {
+            lastDepthUnavailableLogAtMs = nowElapsedMs
+            reportStatus("Detection snapshot captured without depth: ${captureResult.details}", true)
+        }
+
+        val qualityDecision = frameQualityFilter.evaluate(
+            encodedImageBytes = snapshot.screenshotJpegBytes,
+            cameraPose = FrameCameraPoseSample(
+                translationX = snapshot.cameraPose.tx(),
+                translationY = snapshot.cameraPose.ty(),
+                translationZ = snapshot.cameraPose.tz(),
+                rotationX = snapshot.cameraPose.qx(),
+                rotationY = snapshot.cameraPose.qy(),
+                rotationZ = snapshot.cameraPose.qz(),
+                rotationW = snapshot.cameraPose.qw(),
+            ),
+            nowElapsedMs = nowElapsedMs,
+        )
+        if (!qualityDecision.isAccepted) {
             snapshot.screenshot.recycle()
+            if (nowElapsedMs - lastFrameFilterSkipLogAtMs >= FRAME_FILTER_REPORT_INTERVAL_MS) {
+                lastFrameFilterSkipLogAtMs = nowElapsedMs
+                reportStatus("Frame skipped by quality filter: ${qualityDecision.toDebugText()}", false)
+            }
+            return null
+        }
+        if (qualityDecision.isForcedByTimeout &&
+            nowElapsedMs - lastFrameFilterForcedLogAtMs >= FRAME_FILTER_REPORT_INTERVAL_MS
+        ) {
+            lastFrameFilterForcedLogAtMs = nowElapsedMs
+            reportStatus("Frame accepted by 50ms fallback: ${qualityDecision.toDebugText()}", false)
+        }
+        return snapshot
+    }
+
+    /**
+     * Starts asynchronous zone detection and world placement for one already accepted snapshot.
+     *
+     * @param snapshot accepted frame snapshot.
+     * @param activeSceneView currently active AR scene view.
+     * @return launched detection job.
+     */
+    private fun launchZoneDetection(
+        snapshot: DetectionFrameSnapshot,
+        activeSceneView: ARSceneView,
+    ): Job {
+        return coroutineScope.launch(Dispatchers.Default) {
+            try {
+                try {
+                    val translationVariant = when (val displayRotation = activeSceneView.display?.rotation) {
+                        Surface.ROTATION_90,
+                        Surface.ROTATION_270,
+                            -> {
+                            val baseline = baselineLandscapeRotation
+                            if (baseline == null) {
+                                baselineLandscapeRotation = displayRotation
+                                CoordinateTranslationVariant.LANDSCAPE
+                            } else if (displayRotation == baseline) {
+                                CoordinateTranslationVariant.LANDSCAPE
+                            } else {
+                                CoordinateTranslationVariant.LANDSCAPE_REVERSED
+                            }
+                        }
+
+                        else -> CoordinateTranslationVariant.PORTRAIT
+                    }
+                    if (translationVariant != lastTranslationVariant) {
+                        lastTranslationVariant = translationVariant
+                    }
+                    onTranslationInfoChanged(
+                        TranslationOverlayInfo(
+                            translationVariant = translationVariant,
+                            imageWidth = snapshot.imageWidth,
+                            imageHeight = snapshot.imageHeight,
+                            viewWidth = activeSceneView.width,
+                            viewHeight = activeSceneView.height,
+                        ),
+                    )
+                    val detectedZones = zoneDetector.detectZones(snapshot)
+                    withContext(Dispatchers.Main.immediate) {
+                        if (detectedZones.isEmpty()) {
+                            reportStatus("No interest zones detected", false)
+                            return@withContext
+                        }
+                        onZonesDetected(snapshot, detectedZones)
+                        if (!isSceneActive.get() || sceneView !== activeSceneView) {
+                            reportStatus(
+                                "Zone placement skipped: scene was recreated/disposed during async detection.",
+                                false,
+                            )
+                            return@withContext
+                        }
+
+                        detectedZones.forEachIndexed { index, detectedZone ->
+                            if (!isSceneActive.get() || sceneView !== activeSceneView) {
+                                reportStatus(
+                                    "Zone placement stopped: scene was recreated/disposed during async detection.",
+                                    false,
+                                )
+                                return@forEachIndexed
+                            }
+
+                            val placementResult = runCatching {
+                                placeZoneInWorld(
+                                    sceneView = activeSceneView,
+                                    snapshot = snapshot,
+                                    detectedZone = detectedZone,
+                                    translationVariant = translationVariant,
+                                )
+                            }.getOrElse { error ->
+                                ZonePlacementResult(
+                                    zone = null,
+                                    details =
+                                        "Placement aborted: ${error.javaClass.simpleName}: " +
+                                            (error.message ?: "unknown error"),
+                                )
+                            }
+                            if (placementResult.zone != null) {
+                                zonesManager.addZones(listOf(placementResult.zone))
+                                val mergeInfo = zonesManager.consumeMergeDebugInfos()
+                                val mergeMessage = "Merge debug: $mergeInfo"
+                                onMergeInfoChanged(mergeMessage)
+                                reportStatus(
+                                    mergeMessage,
+                                    true,
+                                )
+                                removeQueuedZonesFromWorld()
+                                reportStatus(
+                                    "Zone ${index + 1}/${detectedZones.size} placed using ${placementResult.details} " +
+                                        "from frame ts=${snapshot.frameTimestamp}. ${placementResult.details}",
+                                    true,
+                                )
+                            } else {
+                                reportStatus(
+                                    "Zone ${index + 1}/${detectedZones.size} placement failed. ${placementResult.details}",
+                                    true,
+                                )
+                            }
+                        }
+                        reportStatus(
+                            "Processed ${detectedZones.size} detected zone(s) from frame ts=${snapshot.frameTimestamp}",
+                            true,
+                        )
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    withContext(Dispatchers.Main.immediate) {
+                        reportStatus(
+                            "Zone detection failed: ${error.message ?: error.javaClass.simpleName}",
+                            true,
+                        )
+                    }
+                }
+            } finally {
+                snapshot.screenshot.recycle()
+            }
         }
     }
 
@@ -784,8 +877,9 @@ private data class ServerUpdatePayload(
     val worldPoints: List<ServerWorldPointDto>,
 )
 
-private const val DETECTION_INTERVAL_MS = 5000L
-private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1500L
-private const val FRAME_STATUS_INTERVAL_MS = 1000L
-private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 200L
-private const val SERVER_REFRESH_INTERVAL_MS = 500L
+private const val DETECTION_INTERVAL_MS = 2000L
+private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 3000L
+private const val FRAME_STATUS_INTERVAL_MS = 2000L
+private const val FRAME_FILTER_REPORT_INTERVAL_MS = 1000L
+private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 500L
+private const val SERVER_REFRESH_INTERVAL_MS = 1000L

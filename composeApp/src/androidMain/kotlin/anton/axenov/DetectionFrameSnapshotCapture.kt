@@ -55,7 +55,12 @@ fun captureDetectionFrameSnapshot(
     val depthStatus = depthCapture.second
 
     return try {
-        val screenshot = cameraImageToBitmap(cameraImage)
+        val encodedScreenshot = cameraImageToJpegByteArray(cameraImage)
+        val screenshot = BitmapFactory.decodeByteArray(
+            encodedScreenshot,
+            0,
+            encodedScreenshot.size,
+        )
         val depthSnapshot = depthImage?.let(::depthImageToSnapshot)
         val intrinsics = frame.camera.imageIntrinsics
         val focalLength = FloatArray(2)
@@ -66,6 +71,7 @@ fun captureDetectionFrameSnapshot(
         DetectionFrameSnapshotCaptureResult(
             snapshot = DetectionFrameSnapshot(
                 screenshot = screenshot,
+                screenshotJpegBytes = encodedScreenshot,
                 frameTimestamp = frame.timestamp,
                 imageWidth = cameraImage.width,
                 imageHeight = cameraImage.height,
@@ -94,12 +100,12 @@ fun captureDetectionFrameSnapshot(
 }
 
 /**
- * Converts one camera image from `YUV_420_888` into a full-color ARGB bitmap.
+ * Converts one camera image from `YUV_420_888` into JPEG bytes.
  *
  * @param image camera image in `YUV_420_888`.
- * @return ARGB bitmap with full RGB color.
+ * @return JPEG-encoded image bytes.
  */
-private fun cameraImageToBitmap(image: Image): Bitmap {
+private fun cameraImageToJpegByteArray(image: Image): ByteArray {
     // Get the three planes from the YUV_420_888 image
     val yBuffer = image.planes[0].buffer
     val uBuffer = image.planes[1].buffer
@@ -120,9 +126,7 @@ private fun cameraImageToBitmap(image: Image): Bitmap {
     val outputStream = ByteArrayOutputStream()
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
     yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, outputStream)
-    val jpegData = outputStream.toByteArray()
-
-    return BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+    return outputStream.toByteArray()
 }
 
 /**

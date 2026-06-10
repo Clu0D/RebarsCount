@@ -37,6 +37,7 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.clientOkHttp)
             implementation(libs.google.arcore)
+            implementation(libs.opencv)
             implementation(libs.sceneview.arsceneview)
             implementation(libs.commons.math3)
             implementation(libs.jts.core)

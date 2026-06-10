@@ -7,6 +7,7 @@ import com.google.ar.core.Pose
  * Snapshot of one frame used for asynchronous detection and world placement.
  *
  * @param screenshot screenshot bitmap captured from this frame.
+ * @param screenshotJpegBytes original frame image encoded as JPEG bytes.
  * @param frameTimestamp frame timestamp in nanoseconds.
  * @param imageWidth camera image width in pixels.
  * @param imageHeight camera image height in pixels.
@@ -20,6 +21,7 @@ import com.google.ar.core.Pose
  */
 data class DetectionFrameSnapshot(
     val screenshot: Bitmap,
+    val screenshotJpegBytes: ByteArray,
     val frameTimestamp: Long,
     val imageWidth: Int,
     val imageHeight: Int,
