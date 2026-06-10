@@ -15,6 +15,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import korlibs.math.geom.Vector3F as Vector3
@@ -26,14 +27,18 @@ import korlibs.math.geom.Vector3F as Vector3
  * @param coroutineScope scope used to run asynchronous detection work.
  * @param reportStatus callback used to publish user-visible diagnostics.
  * @param segmentationServerClient client used to upload snapshots and fetch info from server.
+ * @param processingMode selected processing mode.
+ * @param deferredServerClient server client used only after deferred processing is requested.
  * @param zoneDetector detector used to extract interest zones from snapshots.
  * @param isZoneAdditionEnabled provider indicating whether frames may be used to detect and add zones.
  * @param isPointRecognitionEnabled provider indicating whether frames may be stored and sent for point recognition.
+ * @param isFrameSavingEnabled provider indicating whether frames should be saved for deferred processing.
  * @param isFullResultVisible provider indicating whether sending new frames is paused by the result screen.
  * @param onTranslationInfoChanged callback invoked when translation info for overlay changes.
  * @param onMergeInfoChanged callback invoked when persistent merge diagnostics should be updated.
  * @param onWorldPointsInfoChanged callback invoked when global scene world-point diagnostics should be updated.
  * @param onUploadQueueInfoChanged callback invoked when upload queue diagnostics should be updated.
+ * @param onDeferredProcessingStateChanged callback invoked when saved-frame count or deferred progress changes.
  * @param onZonesDetected callback invoked when zones are detected with optional frame projection context.
  * @param onZoneScreenLabelsChanged callback invoked when projected on-screen zone labels should be updated.
  */
@@ -42,14 +47,18 @@ class ArDetectionPipeline(
     private val coroutineScope: CoroutineScope,
     private val reportStatus: (message: String, force: Boolean) -> Unit,
     private val segmentationServerClient: SegmentationClient,
+    private val processingMode: ProcessingMode,
+    private val deferredServerClient: SegmentationClient? = null,
     private val zoneDetector: DetectInterestZones = DetectInterestZones(segmentationServerClient),
     private val isZoneAdditionEnabled: () -> Boolean = { true },
     private val isPointRecognitionEnabled: () -> Boolean = { true },
+    private val isFrameSavingEnabled: () -> Boolean = { false },
     private val isFullResultVisible: () -> Boolean = { false },
     private val onTranslationInfoChanged: (TranslationOverlayInfo) -> Unit = {},
     private val onMergeInfoChanged: (String) -> Unit = {},
     private val onWorldPointsInfoChanged: (String) -> Unit = {},
     private val onUploadQueueInfoChanged: (String) -> Unit = {},
+    private val onDeferredProcessingStateChanged: (DeferredProcessingState) -> Unit = {},
     private val onZonesDetected: (snapshot: DetectionFrameSnapshot, zones: List<DetectedInterestZone>) -> Unit = { _, _ -> },
     private val onZoneScreenLabelsChanged: (List<ZoneScreenLabelEntry>) -> Unit = {},
 ) {
@@ -69,6 +78,9 @@ class ArDetectionPipeline(
     private var lastServerWorldPoints: List<ServerWorldPointDto> = emptyList()
     private var detectionJob: Job? = null
     private var serverStatusJob: Job? = null
+    private var deferredProcessingJob: Job? = null
+    private var deferredResultsActive = false
+    private var deferredProcessingState = DeferredProcessingState()
     private var lastDetectionAtMs = 0L
     private var lastMetricsLabelRefreshAtMs = 0L
     private var lastServerStatusRefreshAtMs = 0L
@@ -127,6 +139,7 @@ class ArDetectionPipeline(
         isSceneActive.set(false)
         detectionJob?.cancel()
         serverStatusJob?.cancel()
+        deferredProcessingJob?.cancel()
         snapshotUploadQueue.stop()
         sceneView = null
         onZoneScreenLabelsChanged(emptyList())
@@ -215,7 +228,10 @@ class ArDetectionPipeline(
                 screenHeight = activeSceneView.height,
                 worldPointProjector = worldPointProjector,
             )
-            if (isPointRecognitionEnabled() && !isFullResultVisible()) {
+            if ((isPointRecognitionEnabled() ||
+                    (processingMode == ProcessingMode.DEFERRED && isFrameSavingEnabled())) &&
+                !isFullResultVisible()
+            ) {
                 addZoneSnapshots(
                     frame = frame,
                     cameraPosition = cameraPosition,
@@ -380,6 +396,64 @@ class ArDetectionPipeline(
     }
 
     /**
+     * Connects to the server, uploads all currently saved zone snapshots and polls processing progress.
+     */
+    fun startDeferredProcessing() {
+        if (processingMode != ProcessingMode.DEFERRED || deferredProcessingJob?.isActive == true) {
+            return
+        }
+        val serverClient = deferredServerClient ?: return
+        val payloads = snapshotsManager.getAllSnapshotPayloads()
+        if (payloads.isEmpty()) {
+            publishDeferredProcessingState(errorMessage = "Нет сохранённых кадров")
+            return
+        }
+        zonesManager.preserveLocalWorldPointCounts()
+        publishDeferredProcessingState(
+            savedFramesCount = payloads.size,
+            processedFramesCount = 0,
+            isRunning = true,
+            errorMessage = null,
+        )
+        deferredProcessingJob = coroutineScope.launch {
+            val error = runCatching {
+                withContext(Dispatchers.IO) {
+                    serverClient.startNewSession()
+                }
+                deferredResultsActive = true
+                withContext(Dispatchers.IO) {
+                    payloads.forEach { payload -> serverClient.predictPoints(payload) }
+                }
+                while (isSceneActive.get()) {
+                    val update = fetchServerUpdate(serverClient)
+                    applyServerUpdate(update)
+                    val processedCount = update.zoneStatuses.sumOf { status ->
+                        status.completed + status.failed
+                    }
+                    val isComplete = processedCount >= payloads.size
+                    publishDeferredProcessingState(
+                        savedFramesCount = payloads.size,
+                        processedFramesCount = processedCount,
+                        isRunning = !isComplete,
+                        errorMessage = null,
+                    )
+                    if (isComplete) {
+                        break
+                    }
+                    delay(SERVER_REFRESH_INTERVAL_MS)
+                }
+            }.exceptionOrNull()
+            if (error != null) {
+                publishDeferredProcessingState(
+                    savedFramesCount = payloads.size,
+                    isRunning = false,
+                    errorMessage = error.message ?: error.javaClass.simpleName,
+                )
+            }
+        }
+    }
+
+    /**
      * Removes all queued zones from manager storage.
      */
     private fun removeQueuedZonesFromWorld() {
@@ -443,9 +517,12 @@ class ArDetectionPipeline(
             val zoneNodes = renderedSnapshotNodesByZone.getOrPut(zone) { IdentityHashMap() }
             zoneNodes[snapshot] = directionNode
         }
-        if (!snapshotUploadQueue.enqueue(zone.id, snapshot.toPayload(zone))) {
-            reportStatus("Server upload queue is unavailable for zone ${zone.id}", true)
+        if (isPointRecognitionEnabled() &&
+            !snapshotUploadQueue.enqueue(zone.id, snapshot.toPayload(zone))
+        ) {
+            reportStatus("Processing upload queue is unavailable for zone ${zone.id}", true)
         }
+        publishDeferredProcessingState()
     }
 
     /**
@@ -455,6 +532,7 @@ class ArDetectionPipeline(
      * @param snapshot removed persisted snapshot.
      */
     private fun onZoneSnapshotRemoved(zone: Zone, snapshot: ZoneSnapshot) {
+        publishDeferredProcessingState()
         val zoneNodes = renderedSnapshotNodesByZone[zone] ?: return
         val node = zoneNodes.remove(snapshot) ?: return
         destroyAnchorNode(node)
@@ -508,10 +586,12 @@ class ArDetectionPipeline(
         serverStatusJob = coroutineScope.launch {
             val serverUpdate = runCatching {
                 withContext(Dispatchers.IO) {
-                    ServerUpdatePayload(
-                        zoneTexts = segmentationServerClient.fetchZoneTexts(),
-                        worldPoints = segmentationServerClient.fetchWorldPoints(),
-                    )
+                    val client = if (deferredResultsActive) {
+                        deferredServerClient ?: segmentationServerClient
+                    } else {
+                        segmentationServerClient
+                    }
+                    fetchServerUpdate(client)
                 }
             }.getOrElse { error ->
                 reportStatus(
@@ -523,21 +603,70 @@ class ArDetectionPipeline(
             if (!isSceneActive.get()) {
                 return@launch
             }
-            val changedZones = zonesManager.applyServerTexts(serverUpdate.zoneTexts)
-            val changedWorldPointCounts = zonesManager.applyWorldPointCounts(
-                worldPointCountsByZoneId = serverUpdate.worldPoints
-                    .groupingBy { worldPoint -> worldPoint.zoneId }
-                    .eachCount(),
-            )
-            onWorldPointsInfoChanged(
-                "World points: scene=${serverUpdate.worldPoints.size}, " +
-                        "zonesWithPoints=${serverUpdate.worldPoints.map { it.zoneId }.distinct().size}",
-            )
-            if (changedZones > 0 || changedWorldPointCounts > 0) {
-                publishZoneScreenLabels()
-            }
-            renderServerWorldPoints(serverUpdate.worldPoints)
+            applyServerUpdate(serverUpdate)
         }
+    }
+
+    /**
+     * Fetches statuses and world points from one processing client.
+     *
+     * @param client client whose current session should be fetched.
+     * @return combined server update payload.
+     */
+    private suspend fun fetchServerUpdate(client: SegmentationClient): ServerUpdatePayload {
+        return withContext(Dispatchers.IO) {
+            ServerUpdatePayload(
+                zoneStatuses = client.fetchZoneStatuses(),
+                worldPoints = client.fetchWorldPoints(),
+            )
+        }
+    }
+
+    /**
+     * Applies one processing update to zones, diagnostics and rendered points.
+     *
+     * @param serverUpdate fetched processing update.
+     */
+    private fun applyServerUpdate(serverUpdate: ServerUpdatePayload) {
+        val changedZones = zonesManager.applyServerTexts(
+            serverUpdate.zoneStatuses.associate { status -> status.zone to status.text },
+        )
+        val changedWorldPointCounts = zonesManager.applyWorldPointCounts(
+            worldPointCountsByZoneId = serverUpdate.worldPoints
+                .groupingBy { worldPoint -> worldPoint.zoneId }
+                .eachCount(),
+        )
+        onWorldPointsInfoChanged(
+            "World points: scene=${serverUpdate.worldPoints.size}, " +
+                "zonesWithPoints=${serverUpdate.worldPoints.map { it.zoneId }.distinct().size}",
+        )
+        if (changedZones > 0 || changedWorldPointCounts > 0) {
+            publishZoneScreenLabels()
+        }
+        renderServerWorldPoints(serverUpdate.worldPoints)
+    }
+
+    /**
+     * Publishes deferred state merged with the latest saved snapshot count.
+     *
+     * @param savedFramesCount optional saved-frame count override.
+     * @param processedFramesCount optional processed-frame count override.
+     * @param isRunning optional running-state override.
+     * @param errorMessage optional error-message override.
+     */
+    private fun publishDeferredProcessingState(
+        savedFramesCount: Int = snapshotsManager.getSnapshotCount(),
+        processedFramesCount: Int = deferredProcessingState.processedFramesCount,
+        isRunning: Boolean = deferredProcessingState.isRunning,
+        errorMessage: String? = deferredProcessingState.errorMessage,
+    ) {
+        deferredProcessingState = DeferredProcessingState(
+            savedFramesCount = savedFramesCount,
+            processedFramesCount = processedFramesCount,
+            isRunning = isRunning,
+            errorMessage = errorMessage,
+        )
+        onDeferredProcessingStateChanged(deferredProcessingState)
     }
 
     /**
@@ -647,11 +776,11 @@ data class ZoneScreenLabelEntry(
 /**
  * Combined payload fetched from the server refresh endpoint group.
  *
- * @param zoneTexts current zone status texts.
+ * @param zoneStatuses current zone processing statuses.
  * @param worldPoints current triangulated world points.
  */
 private data class ServerUpdatePayload(
-    val zoneTexts: Map<Long, String>,
+    val zoneStatuses: List<ZoneStatus>,
     val worldPoints: List<ServerWorldPointDto>,
 )
 

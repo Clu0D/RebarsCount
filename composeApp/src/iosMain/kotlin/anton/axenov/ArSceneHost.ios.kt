@@ -7,11 +7,13 @@ import androidx.compose.ui.Modifier
 /**
  * Renders iOS fallback because ARKit integration is out of scope for this sample.
  *
+ * @param processingMode selected processing mode.
  * @param modifier root layout modifier.
  * @param horizontalAlignment alignment for fallback textual content.
  */
 @Composable
 actual fun ArSceneHost(
+    processingMode: ProcessingMode,
     modifier: Modifier,
     horizontalAlignment: Alignment.Horizontal,
 ) {

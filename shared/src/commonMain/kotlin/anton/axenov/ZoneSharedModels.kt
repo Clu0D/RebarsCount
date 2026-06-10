@@ -233,6 +233,7 @@ data class Zone(
     var serverLabelText: String? = null
     var mergeLabelText: String? = null
     var sceneWorldPointsCount: Int = 0
+    var localWorldPointsCount: Int? = null
 
     /**
      * Is true when the zone has been placed in the world and can be used for segmentation.

@@ -17,7 +17,10 @@ fun buildSessionResultText(zones: List<Zone>): String {
         zones
             .sortedBy { zone -> zone.id }
             .forEach { zone ->
-                appendLine("Зона ${zone.id}: ${zone.sceneWorldPointsCount} точек")
+                val localSuffix = zone.localWorldPointsCount
+                    ?.let { localCount -> " (local: $localCount)" }
+                    .orEmpty()
+                appendLine("Зона ${zone.id}: ${zone.sceneWorldPointsCount}$localSuffix точек")
             }
     }.trimEnd()
 }

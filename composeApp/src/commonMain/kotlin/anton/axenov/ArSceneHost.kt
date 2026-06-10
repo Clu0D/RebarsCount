@@ -9,11 +9,13 @@ import androidx.compose.ui.Modifier
 /**
  * Hosts the platform-specific AR content.
  *
+ * @param processingMode selected processing mode.
  * @param modifier root layout modifier.
  * @param horizontalAlignment alignment for fallback textual content.
  */
 @Composable
 expect fun ArSceneHost(
+    processingMode: ProcessingMode,
     modifier: Modifier = Modifier,
     horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
 )

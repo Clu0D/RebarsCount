@@ -32,12 +32,14 @@ import org.jetbrains.compose.resources.painterResource
  * Draws placeholder workflow and mutually exclusive correction controls.
  *
  * @param state current interface control state.
+ * @param showFrameSaving true when deferred frame saving control should be visible.
  * @param onStateChanged callback invoked with state produced by a button click.
  * @param modifier panel modifier.
  */
 @Composable
 fun InterfaceControlPanel(
     state: InterfaceControlState,
+    showFrameSaving: Boolean,
     onStateChanged: (InterfaceControlState) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -48,16 +50,18 @@ fun InterfaceControlPanel(
             .padding(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ControlButton(
-            icon = Res.drawable.control_frame_saving,
-            description = if (state.isFrameSavingEnabled) {
-                "Остановить сохранение кадров"
-            } else {
-                "Запустить сохранение кадров"
-            },
-            isSelected = state.isFrameSavingEnabled,
-            onClick = { onStateChanged(state.toggleFrameSaving()) },
-        )
+        if (showFrameSaving) {
+            ControlButton(
+                icon = Res.drawable.control_frame_saving,
+                description = if (state.isFrameSavingEnabled) {
+                    "Остановить сохранение кадров"
+                } else {
+                    "Запустить сохранение кадров"
+                },
+                isSelected = state.isFrameSavingEnabled,
+                onClick = { onStateChanged(state.toggleFrameSaving()) },
+            )
+        }
         ControlButton(
             icon = Res.drawable.control_zone_addition,
             description = if (state.isZoneAdditionEnabled) {

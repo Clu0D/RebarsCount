@@ -179,6 +179,17 @@ class ZonesManager(
     }
 
     /**
+     * Preserves current phone-processed point counts before server results replace them.
+     */
+    fun preserveLocalWorldPointCounts() {
+        zones.forEach { zone ->
+            if (zone.localWorldPointsCount == null) {
+                zone.localWorldPointsCount = zone.sceneWorldPointsCount
+            }
+        }
+    }
+
+    /**
      * Removes all currently queued zones and clears removal queue.
      *
      * @return actually removed zones that existed in manager.

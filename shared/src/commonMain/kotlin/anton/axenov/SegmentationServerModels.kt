@@ -21,11 +21,21 @@ data class ServerHealthResponse(
  *
  * @param zone stable zone identifier.
  * @param text user-visible zone status text.
+ * @param total total snapshots accepted for the zone.
+ * @param queued snapshots waiting for processing.
+ * @param processing snapshots currently being processed.
+ * @param completed successfully processed snapshots.
+ * @param failed snapshots that failed processing.
  */
 @Serializable
 data class ZoneStatus(
     val zone: Long,
     val text: String,
+    val total: Int = 0,
+    val queued: Int = 0,
+    val processing: Int = 0,
+    val completed: Int = 0,
+    val failed: Int = 0,
 )
 
 /**

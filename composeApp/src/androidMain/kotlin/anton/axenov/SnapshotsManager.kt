@@ -101,6 +101,26 @@ class SnapshotsManager(
     }
 
     /**
+     * Returns payloads for every currently stored snapshot with its owning zone.
+     *
+     * @return current snapshot payloads in zone iteration order.
+     */
+    fun getAllSnapshotPayloads(): List<ZoneSnapshotUploadDto> {
+        return snapshotsByZone.flatMap { (zone, snapshots) ->
+            snapshots.map { snapshot -> snapshot.toPayload(zone) }
+        }
+    }
+
+    /**
+     * Returns total number of currently stored snapshots.
+     *
+     * @return stored snapshot count.
+     */
+    fun getSnapshotCount(): Int {
+        return snapshotsByZone.values.sumOf { snapshots -> snapshots.size }
+    }
+
+    /**
      * Removes all snapshots for one zone and frees bitmap memory.
      *
      * @return removed snapshot count.

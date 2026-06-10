@@ -98,6 +98,11 @@ class SegmentationSessionProcessor(
                     zone = zoneId,
                     text = "${snapshots.size} snapshots, queued=$queued, processing=$processing, " +
                         "completed=$completed, failed=$failed",
+                    total = snapshots.size,
+                    queued = queued,
+                    processing = processing,
+                    completed = completed,
+                    failed = failed,
                 )
             }
         }
@@ -105,14 +110,18 @@ class SegmentationSessionProcessor(
 
     override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return stateMutex.withLock {
-            triangulationManagersByZoneId.toSortedMap().flatMap { (zoneId, manager) ->
-                manager.getResolvedWorldPoints().map { worldPoint ->
-                    ServerWorldPointDto(
-                        zoneId = zoneId,
-                        position = worldPoint.position,
-                        confidence = worldPoint.confidence,
-                    )
-                }
+            val zones = snapshotsByZoneId.values
+                .mapNotNull { snapshots -> snapshots.firstOrNull()?.snapshot?.zone }
+                .distinctBy { zone -> zone.id }
+                .sortedBy { zone -> zone.id }
+            val worldPoints = triangulationManagersByZoneId.values
+                .flatMap { manager -> manager.getResolvedWorldPoints() }
+            assignWorldPointsToZones(worldPoints, zones).map { assignedWorldPoint ->
+                ServerWorldPointDto(
+                    zoneId = assignedWorldPoint.zoneId,
+                    position = assignedWorldPoint.worldPoint.position,
+                    confidence = assignedWorldPoint.worldPoint.confidence,
+                )
             }
         }
     }

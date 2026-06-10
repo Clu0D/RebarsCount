@@ -51,17 +51,22 @@ import anton.axenov.localServer.LocalClient
 import anton.axenov.localServer.PythonSegmentationPredictor
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
 
 /**
  * Renders Android AR sample content.
  *
+ * @param processingMode selected processing mode.
  * @param modifier root layout modifier.
  * @param horizontalAlignment alignment for fallback textual content.
  */
 @Composable
 actual fun ArSceneHost(
+    processingMode: ProcessingMode,
     modifier: Modifier,
     horizontalAlignment: Alignment.Horizontal,
 ) {
@@ -156,6 +161,7 @@ actual fun ArSceneHost(
     var mergeDebugText by remember { mutableStateOf("Merge debug: waiting for first merge") }
     var worldPointsDebugText by remember { mutableStateOf("World points: scene=0, zonesWithPoints=0") }
     var uploadQueueText by remember { mutableStateOf("Upload queue: queued=0, active=0") }
+    var deferredProcessingState by remember { mutableStateOf(DeferredProcessingState()) }
     var zoneScreenLabels by remember { mutableStateOf(emptyList<ZoneScreenLabelEntry>()) }
     var interfaceControlState by remember { mutableStateOf(InterfaceControlState()) }
     val latestInterfaceControlState = rememberUpdatedState(interfaceControlState)
@@ -165,13 +171,38 @@ actual fun ArSceneHost(
     val pythonSegmentationServerBaseUrl = remember(context) {
         context.getString(R.string.python_segmentation_server_base_url)
     }
-    val segmentationClient = remember(pythonSegmentationServerBaseUrl) {
-        LocalClient(
-            predictor = PythonSegmentationPredictor(
-                baseUrl = pythonSegmentationServerBaseUrl,
-                httpClient = HttpClient(OkHttp),
-            ),
-        )
+    val segmentationServerBaseUrl = remember(context) {
+        context.getString(R.string.segmentation_server_base_url)
+    }
+    val segmentationClient = remember(
+        processingMode,
+        pythonSegmentationServerBaseUrl,
+        segmentationServerBaseUrl,
+    ) {
+        when (processingMode) {
+            ProcessingMode.FULLY_SERVER -> SegmentationServerClient(
+                baseUrl = segmentationServerBaseUrl,
+                httpClient = createJsonHttpClient(),
+            )
+            ProcessingMode.FULLY_LOCAL,
+            ProcessingMode.DEFERRED,
+                -> LocalClient(
+                    predictor = PythonSegmentationPredictor(
+                        baseUrl = pythonSegmentationServerBaseUrl,
+                        httpClient = HttpClient(OkHttp),
+                    ),
+                )
+        }
+    }
+    val deferredServerClient = remember(processingMode, segmentationServerBaseUrl) {
+        if (processingMode == ProcessingMode.DEFERRED) {
+            SegmentationServerClient(
+                baseUrl = segmentationServerBaseUrl,
+                httpClient = createJsonHttpClient(),
+            )
+        } else {
+            null
+        }
     }
     val cameraDistortionProvider = remember(context) {
         ArCameraDistortionProvider(context)
@@ -186,17 +217,24 @@ actual fun ArSceneHost(
         statusReporter,
         screenOverlayStore,
         segmentationClient,
+        processingMode,
+        deferredServerClient,
     ) {
         ArDetectionPipeline(
             cameraDistortionProvider = cameraDistortionProvider,
             coroutineScope = coroutineScope,
             reportStatus = { message, force -> statusReporter.report(message, force) },
             segmentationServerClient = segmentationClient,
+            processingMode = processingMode,
+            deferredServerClient = deferredServerClient,
             isZoneAdditionEnabled = {
                 latestInterfaceControlState.value.isZoneAdditionEnabled
             },
             isPointRecognitionEnabled = {
                 latestInterfaceControlState.value.isPointRecognitionEnabled
+            },
+            isFrameSavingEnabled = {
+                latestInterfaceControlState.value.isFrameSavingEnabled
             },
             isFullResultVisible = {
                 latestInterfaceControlState.value.isFullResultVisible
@@ -218,6 +256,9 @@ actual fun ArSceneHost(
             },
             onUploadQueueInfoChanged = { queueInfo ->
                 uploadQueueText = queueInfo
+            },
+            onDeferredProcessingStateChanged = { state ->
+                deferredProcessingState = state
             },
             onZonesDetected = { snapshot, zones ->
                 screenOverlays = screenOverlayStore.addDetectedZones(
@@ -241,15 +282,16 @@ actual fun ArSceneHost(
 
     LaunchedEffect(segmentationClient) {
         serverText = runCatching {
-            "Local processing: ${segmentationClient.requestHealth()}"
+            "${processingMode.title()}: ${segmentationClient.requestHealth().message}"
         }.getOrElse { error ->
             "Server: ${error.message ?: error.javaClass.simpleName}"
         }
     }
 
-    DisposableEffect(segmentationClient) {
+    DisposableEffect(segmentationClient, deferredServerClient) {
         onDispose {
             segmentationClient.close()
+            deferredServerClient?.close()
         }
     }
 
@@ -307,6 +349,7 @@ actual fun ArSceneHost(
         )
         InterfaceControlPanel(
             state = interfaceControlState,
+            showFrameSaving = processingMode == ProcessingMode.DEFERRED,
             onStateChanged = { interfaceControlState = it },
             modifier = Modifier.align(Alignment.BottomStart),
         )
@@ -322,6 +365,12 @@ actual fun ArSceneHost(
         if (interfaceControlState.isFullResultVisible) {
             FullResultOverlay(
                 resultText = detectionPipeline.buildFullResultText(),
+                deferredProcessingState = if (processingMode == ProcessingMode.DEFERRED) {
+                    deferredProcessingState
+                } else {
+                    null
+                },
+                onProcessSavedFrames = detectionPipeline::startDeferredProcessing,
                 onClose = {
                     interfaceControlState = interfaceControlState.copy(isFullResultVisible = false)
                 },
@@ -332,6 +381,23 @@ actual fun ArSceneHost(
 }
 
 private const val SCREEN_OVERLAY_PRUNE_INTERVAL_MS = 200L
+
+/**
+ * Creates an Android HTTP client configured for shared JSON request and response models.
+ *
+ * @return configured HTTP client.
+ */
+private fun createJsonHttpClient(): HttpClient {
+    return HttpClient(OkHttp) {
+        install(ContentNegotiation) {
+            json(
+                Json {
+                    ignoreUnknownKeys = true
+                },
+            )
+        }
+    }
+}
 
 /**
  * Runs ARCore setup checks and optionally requests ARCore installation.
