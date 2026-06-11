@@ -1,7 +1,11 @@
 package anton.axenov
 
 import com.google.ar.core.Plane
+import com.google.ar.core.Pose
 import io.github.sceneview.ar.ARSceneView
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.random.Random
 import korlibs.math.geom.Vector3F as Vector3
 
@@ -46,12 +50,17 @@ fun placeZoneInWorld(
             details = "Depth failed. Sample View points could not be found.",
         )
     }
+    val fallbackPlacementAllowed = isFallbackPlacementAllowed(
+        sceneView = sceneView,
+        snapshot = snapshot,
+    )
     val pointPlacements = imagePoints.zip(viewSamplePoints).map { (imagePoint, viewPoint) ->
         placePointInWorld(
             sceneView = sceneView,
             snapshot = snapshot,
             imagePoint = imagePoint,
             viewPoint = viewPoint,
+            fallbackPlacementAllowed = fallbackPlacementAllowed,
         )
     }
     val depthPlaced = pointPlacements.count { it?.method == PointPlacementMethod.DEPTH }
@@ -90,11 +99,29 @@ fun placeZoneInWorld(
         planePose = fittedPlanePose,
         projectionInputs = listOf(projectionInput),
     )
+    val zoneAreaSquareMeters = calculateZoneAreaSquareMeters(zone)
+        ?: return failedPlacement(
+                "$placementSummary. " +
+                    "Estimated depth=${planeFit.depthMeters ?: -1f}m. " +
+                    "Plane fit: ${planeFit.details}. " +
+                    "Projected zone polygon is invalid.",
+        )
+    if (zoneAreaSquareMeters !in MIN_ZONE_AREA_SQUARE_METERS..MAX_ZONE_AREA_SQUARE_METERS) {
+        return failedPlacement(
+                "$placementSummary. " +
+                    "Estimated depth=${planeFit.depthMeters ?: -1f}m. " +
+                    "Plane fit: ${planeFit.details}. " +
+                    "Zone area ${zoneAreaSquareMeters}m^2 is outside " +
+                    "[$MIN_ZONE_AREA_SQUARE_METERS, $MAX_ZONE_AREA_SQUARE_METERS]m^2.",
+        )
+    }
     return ZonePlacementResult(
         zone = zone,
         details = "$placementSummary. " +
                 "Estimated depth=${planeFit.depthMeters ?: -1f}m. " +
                 "Plane fit: ${planeFit.details}. " +
+                "fallbackAllowed=$fallbackPlacementAllowed. " +
+                "zoneAreaM2=$zoneAreaSquareMeters. " +
                 "Note: hit tests use current frame, not captured frame ${snapshot.frameTimestamp}." +
                 "projectedCorners=${zone.polygonPoints.size}, " +
                 "sampledPoints=${zone.sampledPoints.size}",
@@ -110,6 +137,7 @@ fun placeZoneInWorld(
  * @param snapshot immutable snapshot captured from a specific frame.
  * @param imagePoint sampled point in image coordinates.
  * @param viewPoint sampled point in SceneView coordinates.
+ * @param fallbackPlacementAllowed true when current camera pose stayed close enough to the snapshot pose.
  * @return resolved placement payload or null when all methods fail.
  */
 private fun placePointInWorld(
@@ -117,9 +145,13 @@ private fun placePointInWorld(
     snapshot: DetectionFrameSnapshot,
     imagePoint: ImagePoint,
     viewPoint: ViewPoint,
+    fallbackPlacementAllowed: Boolean,
 ): PointPlacement? {
-    return placePointWithDepth(snapshot = snapshot, imagePoint = imagePoint)
-        ?: placePointWithHit(sceneView = sceneView, viewPoint = viewPoint)
+    val depthPlacement = placePointWithDepth(snapshot = snapshot, imagePoint = imagePoint)
+    if (depthPlacement != null || !fallbackPlacementAllowed) {
+        return depthPlacement
+    }
+    return placePointWithHit(sceneView = sceneView, viewPoint = viewPoint)
         ?: placePointWithFeature(sceneView = sceneView, viewPoint = viewPoint)
 }
 
@@ -341,8 +373,90 @@ private fun sampleDepthMeters(
                     "windowRadius=$DEPTH_SAMPLE_RADIUS_PX, depthMm=${medianCandidate.depthMillimeters}, " +
                     "confidence=$bestConfidence, validDepthCount=$validDepthCount, " +
                     "positiveConfidenceCount=$positiveConfidenceCount, tieCandidates=${bestConfidenceCandidates.size}, " +
-                    "tieBreak=medianPoint",
+                    "tieBreak=medianDepth",
     )
+}
+
+/**
+ * Checks whether current camera pose stayed close enough to the snapshot pose to trust ARCore fallbacks.
+ *
+ * Plane and feature-point hit tests use the current AR scene state, so they are
+ * allowed only when camera translation and rotation changed only slightly after
+ * the snapshot was captured.
+ *
+ * @param sceneView active SceneView.
+ * @param snapshot captured frame snapshot.
+ * @return true when fallback hit tests may still be used.
+ */
+private fun isFallbackPlacementAllowed(
+    sceneView: ARSceneView,
+    snapshot: DetectionFrameSnapshot,
+): Boolean {
+    val currentPose = sceneView.frame?.camera?.pose ?: return false
+    val translationDeltaMeters = calculatePoseTranslationDeltaMeters(
+        firstPose = snapshot.cameraPose,
+        secondPose = currentPose,
+    )
+    if (translationDeltaMeters > MAX_FALLBACK_CAMERA_TRANSLATION_DELTA_METERS) {
+        return false
+    }
+    val rotationDeltaDegrees = calculatePoseRotationDeltaDegrees(
+        firstPose = snapshot.cameraPose,
+        secondPose = currentPose,
+    )
+    return rotationDeltaDegrees <= MAX_FALLBACK_CAMERA_ROTATION_DELTA_DEGREES
+}
+
+/**
+ * Calculates Euclidean translation delta between two AR poses.
+ *
+ * @param firstPose first pose.
+ * @param secondPose second pose.
+ * @return translation delta in meters.
+ */
+private fun calculatePoseTranslationDeltaMeters(
+    firstPose: Pose,
+    secondPose: Pose,
+): Float {
+    val dx = secondPose.tx() - firstPose.tx()
+    val dy = secondPose.ty() - firstPose.ty()
+    val dz = secondPose.tz() - firstPose.tz()
+    return kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+}
+
+/**
+ * Calculates orientation delta between two AR poses.
+ *
+ * @param firstPose first pose.
+ * @param secondPose second pose.
+ * @return absolute rotation delta in degrees.
+ */
+private fun calculatePoseRotationDeltaDegrees(
+    firstPose: Pose,
+    secondPose: Pose,
+): Float {
+    val quaternionDot = (
+        firstPose.qx() * secondPose.qx() +
+            firstPose.qy() * secondPose.qy() +
+            firstPose.qz() * secondPose.qz() +
+            firstPose.qw() * secondPose.qw()
+        ).coerceIn(-1f, 1f)
+    val angleRadians = 2.0 * acos(abs(quaternionDot).coerceIn(0f, 1f).toDouble())
+    return (angleRadians * 180.0 / PI).toFloat()
+}
+
+/**
+ * Calculates zone polygon area on the fitted plane.
+ *
+ * @param zone zone whose projected polygon should be validated.
+ * @return area in square meters or null when polygon geometry is invalid.
+ */
+private fun calculateZoneAreaSquareMeters(zone: Zone): Float? {
+    if (zone.polygonPoints.size < 3) {
+        return null
+    }
+    val geometry = createPlanePolygonGeometry(zone.polygonPoints, zone.planePose) ?: return null
+    return geometry.area.toFloat()
 }
 
 /**
@@ -434,3 +548,7 @@ private const val DEPTH_SAMPLE_RADIUS_PX = 4
 private const val DEPTH_SAMPLE_POINT_COUNT = 20
 private const val PLANE_MIN_POINT_COUNT = 6
 private const val CAMERA_MATRIX_SIZE = 16
+private const val MAX_FALLBACK_CAMERA_TRANSLATION_DELTA_METERS = 0.05f
+private const val MAX_FALLBACK_CAMERA_ROTATION_DELTA_DEGREES = 5f
+private const val MIN_ZONE_AREA_SQUARE_METERS = 0.001f
+private const val MAX_ZONE_AREA_SQUARE_METERS = 2.0f
