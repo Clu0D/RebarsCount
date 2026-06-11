@@ -54,9 +54,9 @@ data class DepthCandidate(
 )
 
 /**
- * Selects the median point from confidence-tied candidates.
+ * Selects the median-depth point from confidence-tied candidates.
  *
- * Candidates are ordered by `(x, y)` and the middle point is selected.
+ * Candidates are ordered by `(depthMillimeters, x, y)` and the middle point is selected.
  *
  * @param candidates tied candidates with equal confidence.
  * @return median point candidate or null when input is empty.
@@ -65,7 +65,9 @@ fun selectMedianPointCandidate(candidates: List<DepthCandidate>): DepthCandidate
     if (candidates.isEmpty()) {
         return null
     }
-    val sorted = candidates.sortedWith(compareBy<DepthCandidate>({ it.x }, { it.y }))
+    val sorted = candidates.sortedWith(
+        compareBy<DepthCandidate>({ it.depthMillimeters }, { it.x }, { it.y }),
+    )
     return sorted[sorted.size / 2]
 }
 
