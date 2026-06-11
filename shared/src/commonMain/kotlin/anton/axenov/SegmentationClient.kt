@@ -5,6 +5,11 @@ package anton.axenov
  */
 interface SegmentationClient {
     /**
+     * Stable identifier of the current processing session.
+     */
+    val sessionId: String
+
+    /**
      * Returns processing service health.
      *
      * @return current health response.
@@ -25,6 +30,14 @@ interface SegmentationClient {
      * @return queue acceptance response.
      */
     suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse
+
+    /**
+     * Deletes one queued processing request from the current session.
+     *
+     * @param requestId logical request identifier to remove.
+     * @return deletion result.
+     */
+    suspend fun deleteRequest(requestId: String): DeleteRequestResponse
 
     /**
      * Detects zones in one frame.

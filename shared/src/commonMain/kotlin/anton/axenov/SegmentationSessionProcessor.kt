@@ -35,14 +35,17 @@ data class WorldPoint(
  */
 class SegmentationSessionProcessor(
     private val predictor: SegmentationPredictionProvider,
+    override val sessionId: String = "",
     private val workerCount: Int = DEFAULT_SEGMENTATION_WORKER_COUNT,
     private val onSnapshotAccepted: (filename: String, payload: ZoneSnapshotUploadDto) -> Unit = { _, _ -> },
     private val timeSource: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    private val closePredictorOnClose: Boolean = true,
 ) : SegmentationClient {
     private val stateMutex = Mutex()
     private val snapshotsByZoneId = mutableMapOf<Long, MutableList<StoredSnapshotRecord>>()
     private val triangulationManagersByZoneId = mutableMapOf<Long, ZoneTriangulationManager>()
-    private var queue = Channel<QueuedSegmentationTask>(Channel.UNLIMITED)
+    private val queuedTasks = mutableListOf<QueuedSegmentationTask>()
+    private var queueSignals = Channel<Unit>(Channel.UNLIMITED)
     private var scope = newProcessorScope()
     private val workerJobs = mutableListOf<Job>()
     private var assignedWorldPointsCache = emptyList<AssignedWorldPoint>()
@@ -67,6 +70,7 @@ class SegmentationSessionProcessor(
     }
 
     override suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
+        requireSessionMatch(payload.sessionId)
         val filename = "${payload.frameSnapshot.frameTimestamp}-zone-${payload.zone.id}.png"
         onSnapshotAccepted(filename, payload)
         val snapshotCount = stateMutex.withLock {
@@ -74,14 +78,59 @@ class SegmentationSessionProcessor(
             triangulationManagersByZoneId.getOrPut(payload.zone.id) { ZoneTriangulationManager() }
             val record = StoredSnapshotRecord(payload)
             zoneSnapshots += record
-            queue.trySend(QueuedSegmentationTask(payload.zone.id, record))
+            queuedTasks += QueuedSegmentationTask(payload.zone.id, record)
             zoneSnapshots.size
+        }
+        if (queueSignals.trySend(Unit).isFailure) {
+            stateMutex.withLock {
+                snapshotsByZoneId[payload.zone.id]?.removeAll { record ->
+                    record.snapshot.requestId == payload.requestId &&
+                        record.segmentationState == SegmentationState.QUEUED
+                }
+                queuedTasks.removeAll { task ->
+                    task.record.snapshot.requestId == payload.requestId &&
+                        task.record.segmentationState == SegmentationState.QUEUED
+                }
+            }
+            error("Segmentation queue is unavailable for session $sessionId")
         }
         return SnapshotUploadResponse(
             ok = true,
             zoneId = payload.zone.id,
+            requestId = payload.requestId,
             snapshotCount = snapshotCount,
             message = "stored snapshot for zone ${payload.zone.id} and queued segmentation",
+        )
+    }
+
+    override suspend fun deleteRequest(requestId: String): DeleteRequestResponse {
+        val removedSnapshots = stateMutex.withLock {
+            var removedSnapshots = 0
+            snapshotsByZoneId.values.forEach { snapshots ->
+                val beforeCount = snapshots.size
+                snapshots.removeAll { record ->
+                    record.snapshot.requestId == requestId &&
+                        record.segmentationState == SegmentationState.QUEUED
+                }
+                if (snapshots.size < beforeCount) {
+                    removedSnapshots += beforeCount - snapshots.size
+                }
+            }
+            queuedTasks.removeAll { task ->
+                task.record.snapshot.requestId == requestId &&
+                    task.record.segmentationState == SegmentationState.QUEUED
+            }
+            removedSnapshots
+        }
+        return DeleteRequestResponse(
+            ok = true,
+            requestId = requestId,
+            removedSnapshots = removedSnapshots,
+            message = if (removedSnapshots > 0) {
+                "Removed $removedSnapshots queued snapshot(s)"
+            } else {
+                "No queued snapshot matched request $requestId in session $sessionId"
+            },
         )
     }
 
@@ -131,9 +180,11 @@ class SegmentationSessionProcessor(
     override fun close() {
         workerJobs.forEach { worker -> worker.cancel() }
         workerJobs.clear()
-        queue.close()
+        queueSignals.close()
         scope.cancel()
-        predictor.close()
+        if (closePredictorOnClose) {
+            predictor.close()
+        }
     }
 
     /**
@@ -147,6 +198,7 @@ class SegmentationSessionProcessor(
             hasPendingZoneSeparation = false
             hasZoneSeparationRun = false
             lastZoneSeparationAt = timeSource.markNow()
+            queuedTasks.clear()
             restartWorkers()
         }
     }
@@ -158,7 +210,13 @@ class SegmentationSessionProcessor(
         repeat(workerCount) {
             workerJobs += scope.launch(Dispatchers.Default) {
                 while (true) {
-                    val task = queue.receiveCatching().getOrNull() ?: break
+                    queueSignals.receiveCatching().getOrNull() ?: break
+                    val task = stateMutex.withLock {
+                        val queuedTask = queuedTasks.removeFirstOrNullCompat() ?: return@withLock null
+                        queuedTask.record.segmentationState = SegmentationState.PROCESSING
+                        queuedTask.record.segmentationError = null
+                        queuedTask
+                    } ?: continue
                     processTask(task)
                 }
             }
@@ -171,10 +229,6 @@ class SegmentationSessionProcessor(
      * @param task queued snapshot task.
      */
     private suspend fun processTask(task: QueuedSegmentationTask) {
-        stateMutex.withLock {
-            task.record.segmentationState = SegmentationState.PROCESSING
-            task.record.segmentationError = null
-        }
         val filename = "${task.record.snapshot.frameSnapshot.frameTimestamp}-zone-${task.zoneId}.png"
         runCatching {
             predictor.predict(
@@ -206,11 +260,26 @@ class SegmentationSessionProcessor(
     private fun restartWorkers() {
         workerJobs.forEach { worker -> worker.cancel() }
         workerJobs.clear()
-        queue.close()
+        queueSignals.close()
         scope.cancel()
-        queue = Channel<QueuedSegmentationTask>(Channel.UNLIMITED)
+        queueSignals = Channel(Channel.UNLIMITED)
         scope = newProcessorScope()
+        queuedTasks.clear()
         startWorkers()
+    }
+
+    /**
+     * Verifies that incoming payloads belong to this processor session.
+     *
+     * @param candidateSessionId session identifier attached to the request.
+     */
+    private fun requireSessionMatch(candidateSessionId: String) {
+        if (sessionId.isBlank() || candidateSessionId.isBlank()) {
+            return
+        }
+        require(candidateSessionId == sessionId) {
+            "Request session $candidateSessionId does not match processor session $sessionId"
+        }
     }
 
     /**
@@ -259,6 +328,18 @@ private data class QueuedSegmentationTask(
  */
 private fun newProcessorScope(): CoroutineScope {
     return CoroutineScope(SupervisorJob() + Dispatchers.Default)
+}
+
+/**
+ * Removes and returns the first list element.
+ *
+ * @return first element or null when the list is empty.
+ */
+private fun <T> MutableList<T>.removeFirstOrNullCompat(): T? {
+    if (isEmpty()) {
+        return null
+    }
+    return removeAt(0)
 }
 
 private const val DEFAULT_SEGMENTATION_WORKER_COUNT = 3

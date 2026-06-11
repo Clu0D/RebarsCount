@@ -1,6 +1,7 @@
 package anton.axenov.localServer
 
 import anton.axenov.DetectionFrameSnapshotDto
+import anton.axenov.DeleteRequestResponse
 import anton.axenov.SegmentationClient
 import anton.axenov.SegmentationPrediction
 import anton.axenov.SegmentationPredictionProvider
@@ -10,6 +11,7 @@ import anton.axenov.ServerWorldPointDto
 import anton.axenov.SnapshotUploadResponse
 import anton.axenov.ZoneSnapshotUploadDto
 import anton.axenov.ZoneStatus
+import anton.axenov.generateRequestIdentifier
 
 /**
  * On-device segmentation client backed by the shared session-processing engine.
@@ -21,8 +23,12 @@ import anton.axenov.ZoneStatus
  */
 class LocalClient(
     predictor: SegmentationPredictionProvider,
+    override val sessionId: String = generateRequestIdentifier(),
 ) : SegmentationClient {
-    private val processor = SegmentationSessionProcessor(predictor)
+    private val processor = SegmentationSessionProcessor(
+        predictor = predictor,
+        sessionId = sessionId,
+    )
 
     /**
      * Returns local processor health.
@@ -50,6 +56,16 @@ class LocalClient(
      */
     override suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
         return processor.predictPoints(payload)
+    }
+
+    /**
+     * Deletes one queued local processing request.
+     *
+     * @param requestId logical request identifier to remove.
+     * @return deletion result.
+     */
+    override suspend fun deleteRequest(requestId: String): DeleteRequestResponse {
+        return processor.deleteRequest(requestId)
     }
 
     /**

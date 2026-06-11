@@ -2,9 +2,11 @@ package anton.axenov
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.accept
+import io.ktor.client.request.header
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -21,6 +23,7 @@ import io.ktor.http.isSuccess
 class SegmentationServerClient(
     baseUrl: String,
     private val httpClient: HttpClient,
+    override val sessionId: String = generateRequestIdentifier(),
 ) : SegmentationClient {
     private val normalizedBaseUrl = baseUrl.trimEnd('/')
 
@@ -31,7 +34,9 @@ class SegmentationServerClient(
      */
     override suspend fun requestHealth(): ServerHealthResponse {
         return httpClient
-            .get("$normalizedBaseUrl/health")
+            .get("$normalizedBaseUrl/health") {
+                applyRequestMetadata()
+            }
             .bodyOrThrow("Health request")
     }
 
@@ -43,6 +48,7 @@ class SegmentationServerClient(
     override suspend fun startNewSession(): ServerHealthResponse {
         return httpClient
             .post("$normalizedBaseUrl/start_new_session") {
+                applyRequestMetadata()
                 contentType(ContentType.Application.Json)
             }
             .bodyOrThrow("Starting a new session")
@@ -57,11 +63,29 @@ class SegmentationServerClient(
     override suspend fun predictPoints(payload: ZoneSnapshotUploadDto): SnapshotUploadResponse {
         return httpClient
             .post("$normalizedBaseUrl/predict_points") {
+                applyRequestMetadata()
                 accept(ContentType.Application.Json)
                 contentType(ContentType.Application.Json)
                 setBody(payload)
             }
             .bodyOrThrow("Point prediction")
+    }
+
+    /**
+     * Deletes one queued snapshot-processing request from the current session.
+     *
+     * @param requestId logical request identifier to remove.
+     * @return deletion result.
+     */
+    override suspend fun deleteRequest(requestId: String): DeleteRequestResponse {
+        return httpClient
+            .post("$normalizedBaseUrl/delete_request") {
+                applyRequestMetadata()
+                accept(ContentType.Application.Json)
+                contentType(ContentType.Application.Json)
+                setBody(DeleteRequestDto(requestId = requestId))
+            }
+            .bodyOrThrow("Deleting request $requestId")
     }
 
     /**
@@ -73,6 +97,7 @@ class SegmentationServerClient(
     override suspend fun predictZones(frameSnapshot: DetectionFrameSnapshotDto): SegmentationPrediction {
         return httpClient
             .post("$normalizedBaseUrl/predict_zones") {
+                applyRequestMetadata()
                 accept(ContentType.Application.Json)
                 contentType(ContentType.Application.Json)
                 setBody(frameSnapshot)
@@ -87,7 +112,9 @@ class SegmentationServerClient(
      */
     override suspend fun fetchZoneStatuses(): List<ZoneStatus> {
         return httpClient
-            .get("$normalizedBaseUrl/zone-statuses")
+            .get("$normalizedBaseUrl/zone-statuses") {
+                applyRequestMetadata()
+            }
             .bodyOrThrow("Fetching zone statuses")
     }
 
@@ -98,7 +125,9 @@ class SegmentationServerClient(
      */
     override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return httpClient
-            .get("$normalizedBaseUrl/world-points")
+            .get("$normalizedBaseUrl/world-points") {
+                applyRequestMetadata()
+            }
             .bodyOrThrow("Fetching world points")
     }
 
@@ -117,6 +146,13 @@ class SegmentationServerClient(
      */
     override fun close() {
         httpClient.close()
+    }
+
+    /**
+     * Adds session correlation headers to one HTTP request.
+     */
+    private fun HttpRequestBuilder.applyRequestMetadata() {
+        header(SESSION_ID_HTTP_HEADER, sessionId)
     }
 }
 

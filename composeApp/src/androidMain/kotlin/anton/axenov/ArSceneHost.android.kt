@@ -174,8 +174,10 @@ actual fun ArSceneHost(
     val segmentationServerBaseUrl = remember(context) {
         context.getString(R.string.segmentation_server_base_url)
     }
+    val processingSessionId = remember { generateRequestIdentifier() }
     val segmentationClient = remember(
         processingMode,
+        processingSessionId,
         pythonSegmentationServerBaseUrl,
         segmentationServerBaseUrl,
     ) {
@@ -183,10 +185,12 @@ actual fun ArSceneHost(
             ProcessingMode.FULLY_SERVER -> SegmentationServerClient(
                 baseUrl = segmentationServerBaseUrl,
                 httpClient = createJsonHttpClient(),
+                sessionId = processingSessionId,
             )
             ProcessingMode.FULLY_LOCAL,
             ProcessingMode.DEFERRED,
                 -> LocalClient(
+                    sessionId = processingSessionId,
                     predictor = PythonSegmentationPredictor(
                         baseUrl = pythonSegmentationServerBaseUrl,
                         httpClient = HttpClient(OkHttp),
@@ -194,11 +198,12 @@ actual fun ArSceneHost(
                 )
         }
     }
-    val deferredServerClient = remember(processingMode, segmentationServerBaseUrl) {
+    val deferredServerClient = remember(processingMode, segmentationServerBaseUrl, processingSessionId) {
         if (processingMode == ProcessingMode.DEFERRED) {
             SegmentationServerClient(
                 baseUrl = segmentationServerBaseUrl,
                 httpClient = createJsonHttpClient(),
+                sessionId = processingSessionId,
             )
         } else {
             null

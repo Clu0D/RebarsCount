@@ -14,6 +14,8 @@ import kotlin.math.sqrt
  * @param onSnapshotRemoved callback invoked when snapshot is removed.
  */
 class SnapshotsManager(
+    private val sessionId: String,
+    private val requestIdGenerator: () -> String = ::generateRequestIdentifier,
     private val onSnapshotStored: (zone: Zone, snapshot: ZoneSnapshot) -> Unit = { _, _ -> },
     private val onSnapshotRemoved: (zone: Zone, snapshot: ZoneSnapshot) -> Unit = { _, _ -> },
 ) {
@@ -168,11 +170,13 @@ class SnapshotsManager(
         screenCoverage: ZoneScreenCoverageMetrics,
     ): ZoneSnapshot {
         return ZoneSnapshot(
-            frameSnapshot.copy(
+            sessionId = sessionId,
+            requestId = requestIdGenerator(),
+            frameSnapshot = frameSnapshot.copy(
                 screenshot = frameSnapshot.screenshot.copyBitmapForStorage(),
             ),
-            captureAngle,
-            screenCoverage
+            captureAngle = captureAngle,
+            screenCoverage = screenCoverage,
         )
     }
 }
@@ -190,17 +194,23 @@ enum class SnapshotStoreDecision {
 /**
  * Persisted screenshot payload for one zone.
  *
+ * @param sessionId stable processing session identifier.
+ * @param requestId logical identifier of this snapshot-processing request.
  * @param frameSnapshot copied frame snapshot with camera image and intrinsics.
  * @param captureAngle angle metrics for this zone at the current frame.
  * @param screenCoverage coverage metrics for this zone at the current frame.
  */
 data class ZoneSnapshot(
+    val sessionId: String,
+    val requestId: String,
     val frameSnapshot: DetectionFrameSnapshot,
     val captureAngle: ZoneCaptureAngle,
     val screenCoverage: ZoneScreenCoverageMetrics,
 ) {
     fun toPayload(zone: Zone): ZoneSnapshotUploadDto {
         return ZoneSnapshotUploadDto(
+            sessionId = sessionId,
+            requestId = requestId,
             zone = zone,
             frameSnapshot = frameSnapshot.toPayload(),
             captureAngle = captureAngle,

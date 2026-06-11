@@ -65,6 +65,7 @@ class ArDetectionPipeline(
     private val isSceneActive = AtomicBoolean(false)
     private var sceneView: ARSceneView? = null
     private val snapshotsManager = SnapshotsManager(
+        sessionId = segmentationServerClient.sessionId,
         onSnapshotStored = ::onZoneSnapshotStored,
         onSnapshotRemoved = ::onZoneSnapshotRemoved,
     )
@@ -447,11 +448,61 @@ class ArDetectionPipeline(
      */
     private fun onZoneSnapshotRemoved(zone: Zone, snapshot: ZoneSnapshot) {
         publishDeferredProcessingState()
+        val removedFromUploadQueue = snapshotUploadQueue.cancel(
+            sessionId = snapshot.sessionId,
+            requestId = snapshot.requestId,
+        )
+        if (!removedFromUploadQueue) {
+            deleteSnapshotRequest(snapshot)
+        } else if (deferredResultsActive) {
+            coroutineScope.launch(Dispatchers.IO) {
+                deleteDeferredSnapshotRequest(snapshot)
+            }
+        }
         val zoneNodes = renderedSnapshotNodesByZone[zone] ?: return
         val node = zoneNodes.remove(snapshot) ?: return
         destroyAnchorNode(node)
         if (zoneNodes.isEmpty()) {
             renderedSnapshotNodesByZone.remove(zone)
+        }
+    }
+
+    /**
+     * Deletes one removed snapshot from active processing backends.
+     *
+     * @param snapshot removed snapshot metadata.
+     */
+    private fun deleteSnapshotRequest(snapshot: ZoneSnapshot) {
+        coroutineScope.launch(Dispatchers.IO) {
+            runCatching {
+                segmentationServerClient.deleteRequest(snapshot.requestId)
+            }.onFailure { error ->
+                reportStatus(
+                    "Failed to delete request ${snapshot.requestId}: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+            }
+            deleteDeferredSnapshotRequest(snapshot)
+        }
+    }
+
+    /**
+     * Deletes one removed snapshot from deferred server processing when it is active.
+     *
+     * @param snapshot removed snapshot metadata.
+     */
+    private suspend fun deleteDeferredSnapshotRequest(snapshot: ZoneSnapshot) {
+        val serverClient = deferredServerClient
+        if (!deferredResultsActive || serverClient == null) {
+            return
+        }
+        runCatching {
+            serverClient.deleteRequest(snapshot.requestId)
+        }.onFailure { error ->
+            reportStatus(
+                "Failed to delete deferred request ${snapshot.requestId}: ${error.message ?: error.javaClass.simpleName}",
+                true,
+            )
         }
     }
 

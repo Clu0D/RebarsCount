@@ -43,6 +43,7 @@ data class ZoneStatus(
  *
  * @param ok true when snapshot was stored.
  * @param zoneId uploaded zone identifier.
+ * @param requestId logical request identifier of the uploaded snapshot.
  * @param snapshotCount stored snapshot count for this zone.
  * @param message user-visible server message.
  */
@@ -50,7 +51,34 @@ data class ZoneStatus(
 data class SnapshotUploadResponse(
     val ok: Boolean,
     val zoneId: Long,
+    val requestId: String,
     val snapshotCount: Int,
+    val message: String,
+)
+
+/**
+ * Request used to delete one queued processing item from the current session.
+ *
+ * @param requestId logical request identifier to remove.
+ */
+@Serializable
+data class DeleteRequestDto(
+    val requestId: String,
+)
+
+/**
+ * Response returned after deleting one queued processing item.
+ *
+ * @param ok true when deletion finished successfully.
+ * @param requestId logical request identifier that was checked.
+ * @param removedSnapshots number of removed queued snapshots.
+ * @param message user-visible deletion result.
+ */
+@Serializable
+data class DeleteRequestResponse(
+    val ok: Boolean,
+    val requestId: String,
+    val removedSnapshots: Int,
     val message: String,
 )
 
@@ -175,6 +203,8 @@ data class DetectionFrameSnapshotDto(
 /**
  * Upload payload for one stored zone snapshot.
  *
+ * @param sessionId stable client session identifier.
+ * @param requestId logical identifier of this specific snapshot-processing request.
  * @param zone serialized zone payload.
  * @param frameSnapshot serialized frame payload.
  * @param captureAngle serialized capture-angle metrics.
@@ -182,6 +212,8 @@ data class DetectionFrameSnapshotDto(
  */
 @Serializable
 data class ZoneSnapshotUploadDto(
+    val sessionId: String,
+    val requestId: String,
     val zone: Zone,
     val frameSnapshot: DetectionFrameSnapshotDto,
     val captureAngle: ZoneCaptureAngle,
