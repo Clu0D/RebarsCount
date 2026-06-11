@@ -31,3 +31,16 @@ internal actual fun calculateZonePolygonDifference(
 }
 
 private const val MIN_ZONE_POLYGON_AREA = 1e-6f
+internal actual fun filterProjectionInputsByMergedHull(
+    projectionInputs: List<ZoneProjectionInput>,
+    mergedPolygon: List<Vector3>,
+    referencePlanePose: PlanePose,
+): List<ZoneProjectionInput> {
+    val mergedGeometry = createPlanePolygonGeometry(mergedPolygon, referencePlanePose)
+        ?: return emptyList()
+    return projectionInputs.filter { input ->
+        val inputPolygon = input.projectToPlane(referencePlanePose) ?: return@filter false
+        val inputGeometry = createPlanePolygonGeometry(inputPolygon, referencePlanePose) ?: return@filter false
+        !inputGeometry.intersection(mergedGeometry).isEmpty
+    }
+}

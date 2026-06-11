@@ -111,6 +111,7 @@ fun translateCoordinates(
  * @param principalPointX camera principal point X in pixels.
  * @param principalPointY camera principal point Y in pixels.
  * @param cameraToWorldMatrix camera pose matrix in OpenGL column-major form.
+ * @param projectionConfidence confidence of the segmentation observation in range `[0, 1]`.
  */
 @Serializable
 class ZoneProjectionInput(
@@ -123,6 +124,7 @@ class ZoneProjectionInput(
     val principalPointX: Float,
     val principalPointY: Float,
     val cameraToWorldMatrix: FloatArray,
+    val projectionConfidence: Float,
 ) {
     /**
      * Returns camera world position extracted from [cameraToWorldMatrix].

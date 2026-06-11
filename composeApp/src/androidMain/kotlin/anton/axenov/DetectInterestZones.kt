@@ -34,7 +34,10 @@ class DetectInterestZones(
             if (clampedBox.left >= clampedBox.right || clampedBox.top >= clampedBox.bottom) {
                 null
             } else {
-                DetectedInterestZone(screenBoundingBox = clampedBox)
+                DetectedInterestZone(
+                    screenBoundingBox = clampedBox,
+                    confidence = instance.confidence
+                )
             }
         }
     }

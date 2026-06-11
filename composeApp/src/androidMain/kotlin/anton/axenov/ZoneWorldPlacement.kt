@@ -285,6 +285,7 @@ private fun buildZoneProjectionInput(
         principalPointX = snapshot.principalPointX,
         principalPointY = snapshot.principalPointY,
         cameraToWorldMatrix = cameraToWorldMatrix,
+        projectionConfidence = zone.confidence,
     )
 }
 

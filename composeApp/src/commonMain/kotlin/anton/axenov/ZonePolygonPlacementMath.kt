@@ -83,5 +83,19 @@ internal expect fun calculateZonePolygonDifference(
     referencePlanePose: PlanePose,
 ): Float?
 
-private const val MERGED_ZONE_MAX_DIFFERENCE_RATIO = 0.2f
-private const val MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES = 10f
+/**
+ * Keeps only those projection inputs whose projected polygons intersect the final merged hull.
+ *
+ * @param projectionInputs source projection inputs participating in the merge.
+ * @param mergedPolygon final merged polygon built on [referencePlanePose].
+ * @param referencePlanePose plane used to project polygons into local 2D coordinates.
+ * @return surviving projection inputs that remain geometrically consistent with the merged result.
+ */
+internal expect fun filterProjectionInputsByMergedHull(
+    projectionInputs: List<ZoneProjectionInput>,
+    mergedPolygon: List<Vector3>,
+    referencePlanePose: PlanePose,
+): List<ZoneProjectionInput>
+
+private const val MERGED_ZONE_MAX_DIFFERENCE_RATIO = 0.5f
+private const val MERGED_ZONE_MAX_PLANE_ANGLE_DEGREES = 25f

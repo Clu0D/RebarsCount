@@ -264,7 +264,10 @@ class ZonesManager(
             )
         }
         val zonesToMerge = listOf(zoneToMerge, newZone)
-        val mergedProjectionInputs = zonesToMerge.flatMap { zone -> zone.projectionInputs }
+        val mergedProjectionInputs = zonesToMerge
+            .flatMap { zone -> zone.projectionInputs }
+            .sortedByDescending { input -> input.projectionConfidence }
+            .take(MAX_PROJECTION_INPUTS_PER_MERGE)
         val mergedSampledPoints = zonesToMerge.flatMap { zone -> zone.sampledPoints }
         val cameraPosition = mergedProjectionInputs.firstOrNull()?.cameraPosition() ?: newZone.planePose.center
         val mergedPlanePose = fitPlanePoseFromPoints(
@@ -272,10 +275,25 @@ class ZonesManager(
             cameraPosition = cameraPosition,
             minPointCount = MERGE_PLANE_MIN_POINT_COUNT,
         ).pose ?: newZone.planePose
-        val mergedZone = Zone(
+        val preliminaryMergedZone = Zone(
             sampledPoints = mergedSampledPoints,
             planePose = mergedPlanePose,
             projectionInputs = mergedProjectionInputs,
+        )
+        val survivingProjectionInputs = filterProjectionInputsByMergedHull(
+            projectionInputs = mergedProjectionInputs,
+            mergedPolygon = preliminaryMergedZone.polygonPoints,
+            referencePlanePose = preliminaryMergedZone.planePose,
+        )
+        if (survivingProjectionInputs.isEmpty()) {
+            return ZoneMergeResult(
+                zone = null,
+                overlapZonesCount = 1,
+                maxOverlapPercent = maxOverlapPercent,
+            )
+        }
+        val mergedZone = preliminaryMergedZone.copy(
+            projectionInputs = survivingProjectionInputs,
         )
         val zoneChangeInsignificance = wasZoneChangeInsignificant(mergedZone, zonesToMerge)
             ?: return ZoneMergeResult(
@@ -358,3 +376,4 @@ private data class ZoneMergeResult(
 
 private const val BOX_INTERSECTION_THRESHOLD = 0.5f
 private const val MERGE_PLANE_MIN_POINT_COUNT = 3
+private const val MAX_PROJECTION_INPUTS_PER_MERGE = 10
