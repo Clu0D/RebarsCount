@@ -4,9 +4,11 @@ package anton.axenov
  * Represents one detected interest zone.
  *
  * @param screenBoundingBox zone location in screenshot pixel coordinates.
+ * @param confidence segmentation confidence in range `[0, 1]`.
  */
 data class DetectedInterestZone(
     val screenBoundingBox: ScreenBoundingBox,
+    val confidence: Float,
 )
 
 /**

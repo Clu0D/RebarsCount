@@ -118,22 +118,39 @@ fun getZoneScreenCoverage(
         )
     }
 
-    val projectedPolygon = zone.polygonPoints.map { worldPoint ->
-        val projected = worldPointProjector(worldPoint)
-            ?: return ZoneScreenCoverageMetrics(
-                projectedArea = 0f,
-                visibleArea = 0f,
-                isFullyInside = false,
-                screenArea = screenArea,
-            )
-        ImagePoint(
-            x = projected.xPx.roundToInt(),
-            y = projected.yPx.roundToInt(),
+    val projectedPolygon = projectZonePolygonToScreen(zone, worldPointProjector)
+        ?: return ZoneScreenCoverageMetrics(
+            projectedArea = 0f,
+            visibleArea = 0f,
+            isFullyInside = false,
+            screenArea = screenArea,
         )
-    }
     return calculateScreenPolygonCoverage(
         screenPolygon = projectedPolygon,
         screenWidth = screenWidth,
         screenHeight = screenHeight,
     )
+}
+
+/**
+ * Projects current zone polygon to current camera view.
+ *
+ * @param zone zone to project.
+ * @param worldPointProjector projects world point into current screen coordinates (null if can't).
+ * @return projected polygon in screen pixels or null when projection failed.
+ */
+fun projectZonePolygonToScreen(
+    zone: Zone,
+    worldPointProjector: (Vector3) -> ViewPoint?,
+): List<ImagePoint>? {
+    if (zone.polygonPoints.size < 3) {
+        return null
+    }
+    return zone.polygonPoints.map { worldPoint ->
+        val projected = worldPointProjector(worldPoint) ?: return null
+        ImagePoint(
+            x = projected.xPx.roundToInt(),
+            y = projected.yPx.roundToInt(),
+        )
+    }
 }

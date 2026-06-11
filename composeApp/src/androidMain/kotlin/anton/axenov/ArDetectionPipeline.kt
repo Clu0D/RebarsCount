@@ -475,11 +475,74 @@ class ArDetectionPipeline(
         if (zones.isEmpty()) {
             return
         }
-        zones.forEach { zone ->
+        val snapshotCandidate = selectSnapshotTargetZone(
+            zones = zones,
+            cameraPosition = cameraPosition,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            worldPointProjector = worldPointProjector,
+        ) ?: return
+        snapshotsManager.addSnapshot(
+            zone = snapshotCandidate.zone,
+            frameSnapshot = frameSnapshot,
+            captureAngle = snapshotCandidate.captureAngle,
+            screenCoverage = snapshotCandidate.screenCoverage,
+        )
+    }
+
+    /**
+     * Selects one zone that should own the current frame.
+     *
+     * Steps:
+     * 1) keep only visible zones with good `theta/gamma`,
+     * 2) reject zones whose visible area is strongly covered by a closer zone,
+     * 3) assign the frame to the remaining zone with maximal `gamma`.
+     *
+     * @param zones placed zones currently visible in the scene.
+     * @param cameraPosition current camera world position.
+     * @param screenWidth current screen width.
+     * @param screenHeight current screen height.
+     * @param worldPointProjector current world-to-screen projector.
+     * @return selected snapshot target or null when no zone is suitable.
+     */
+    private fun selectSnapshotTargetZone(
+        zones: List<Zone>,
+        cameraPosition: Vector3,
+        screenWidth: Int,
+        screenHeight: Int,
+        worldPointProjector: (Vector3) -> ViewPoint?,
+    ): SnapshotTargetZoneCandidate? {
+        val qualityCandidates = zones.mapNotNull { zone ->
             val captureAngle = getZoneCaptureAngle(zone.planePose, cameraPosition)
             val screenCoverage = getZoneScreenCoverage(zone, screenWidth, screenHeight, worldPointProjector)
-            snapshotsManager.addSnapshot(zone, frameSnapshot, captureAngle, screenCoverage)
+            if (!snapshotsManager.isSnapshotGood(captureAngle, screenCoverage)) {
+                return@mapNotNull null
+            }
+            val projectedPolygon = projectZonePolygonToScreen(zone, worldPointProjector)
+                ?: return@mapNotNull null
+            SnapshotTargetZoneCandidate(
+                zone = zone,
+                captureAngle = captureAngle,
+                screenCoverage = screenCoverage,
+                distanceMeters = (cameraPosition - zone.center).length,
+                projectedPolygon = projectedPolygon,
+            )
         }
+        if (qualityCandidates.isEmpty()) {
+            return null
+        }
+
+        val visibleCandidates = qualityCandidates.filter { candidate ->
+            qualityCandidates.none { otherCandidate ->
+                otherCandidate !== candidate &&
+                    otherCandidate.distanceMeters < candidate.distanceMeters &&
+                    calculateScreenPolygonOcclusionRatio(
+                        firstScreenPolygon = candidate.projectedPolygon,
+                        secondScreenPolygon = otherCandidate.projectedPolygon,
+                    ) > MAX_ZONE_OCCLUSION_RATIO
+            }
+        }
+        return visibleCandidates.maxByOrNull { candidate -> candidate.screenCoverage.coverage }
     }
 
     /**
@@ -877,9 +940,27 @@ private data class ServerUpdatePayload(
     val worldPoints: List<ServerWorldPointDto>,
 )
 
+/**
+ * One candidate zone that may receive the current frame snapshot.
+ *
+ * @param zone candidate zone.
+ * @param captureAngle current camera-to-zone orientation metrics.
+ * @param screenCoverage current visible coverage metrics.
+ * @param distanceMeters current camera-to-zone distance.
+ * @param projectedPolygon current zone polygon projected to screen pixels.
+ */
+private data class SnapshotTargetZoneCandidate(
+    val zone: Zone,
+    val captureAngle: ZoneCaptureAngle,
+    val screenCoverage: ZoneScreenCoverageMetrics,
+    val distanceMeters: Float,
+    val projectedPolygon: List<ImagePoint>,
+)
+
 private const val DETECTION_INTERVAL_MS = 2000L
 private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 3000L
 private const val FRAME_STATUS_INTERVAL_MS = 2000L
 private const val FRAME_FILTER_REPORT_INTERVAL_MS = 1000L
 private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 500L
 private const val SERVER_REFRESH_INTERVAL_MS = 1000L
+private const val MAX_ZONE_OCCLUSION_RATIO = 0.2f
