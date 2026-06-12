@@ -42,47 +42,37 @@ fun drawZoneStaticNodes(
 }
 
 /**
- * Draws one short world-space line that starts at snapshot camera position and points
- * in the snapshot camera forward direction.
+ * Draws short guidance rays for recommended additional capture positions.
  *
  * @param sceneView active SceneView.
- * @param frameSnapshot captured frame snapshot with camera pose.
- * @return created anchor node or null when AR session is unavailable.
+ * @param suggestedDirections recommended camera rays for one zone.
+ * @return created anchor nodes.
  */
-fun drawSnapshotCameraDirectionNode(
+fun drawSuggestedCaptureDirectionNodes(
     sceneView: ARSceneView,
-    frameSnapshot: DetectionFrameSnapshot,
-): AnchorNode? {
-    val session = sceneView.session ?: return null
-    val cameraPose = frameSnapshot.cameraPose
-    val lineStart = Vector3(
-        cameraPose.tx(),
-        cameraPose.ty(),
-        cameraPose.tz(),
-    )
-    val lineEndWorld = cameraPose.transformPoint(
-        floatArrayOf(0f, 0f, -SNAPSHOT_DIRECTION_LINE_LENGTH_METERS),
-    )
-    val lineEnd = Vector3(
-        lineEndWorld[0],
-        lineEndWorld[1],
-        lineEndWorld[2],
-    )
-    return createEdgeAnchorNode(
-        sceneView = sceneView,
-        session = session,
-        start = lineStart,
-        end = lineEnd,
-    ) { edgeLength ->
-        CubeNode(
-            engine = sceneView.engine,
-            size = dev.romainguy.kotlin.math.Float3(
-                edgeLength,
-                SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
-                SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
-            ),
-            materialInstance = getUnlitMaterial(sceneView, 1f, 1f, 1f, 0.5f),
-        )
+    suggestedDirections: List<SuggestedCaptureDirection>,
+): List<AnchorNode> {
+    val session = sceneView.session ?: return emptyList()
+    return suggestedDirections.mapNotNull { suggestedDirection ->
+        val lineStart = suggestedDirection.cameraPosition
+        val lineDirection = (suggestedDirection.targetPosition - lineStart).normalized()
+        val lineEnd = lineStart + lineDirection * SNAPSHOT_DIRECTION_LINE_LENGTH_METERS
+        createEdgeAnchorNode(
+            sceneView = sceneView,
+            session = session,
+            start = lineStart,
+            end = lineEnd,
+        ) { edgeLength ->
+            CubeNode(
+                engine = sceneView.engine,
+                size = dev.romainguy.kotlin.math.Float3(
+                    edgeLength,
+                    SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
+                    SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS,
+                ),
+                materialInstance = getUnlitMaterial(sceneView, 1f, 1f, 1f, 0.5f),
+            )
+        }
     }
 }
 
@@ -439,16 +429,16 @@ private fun isFiniteQuaternion(quaternion: Quaternion): Boolean {
             abs(quaternion.w) <= 1f + QUATERNION_COMPONENT_EPSILON
 }
 
-private const val POINT_MARKER_SIZE_METERS = 0.005f
-private const val SERVER_POINT_MARKER_MIN_SIZE_METERS = 0.006f
-private const val SERVER_POINT_MARKER_MAX_SIZE_METERS = 0.02f
+private const val POINT_MARKER_SIZE_METERS = 0.001f
+private const val SERVER_POINT_MARKER_MIN_SIZE_METERS = 0.001f
+private const val SERVER_POINT_MARKER_MAX_SIZE_METERS = 0.005f
 private const val LINE_THICKNESS_FACTOR = 0.02f
 private const val LINE_MIN_THICKNESS_METERS = 0.003f
 private const val LINE_MAX_THICKNESS_METERS = 0.03f
 private const val MIN_EDGE_LENGTH_METERS = 0.001f
 private const val BOUNDING_BOX_LINE_THICKNESS_METERS = 0.0015f
-private const val SNAPSHOT_DIRECTION_LINE_LENGTH_METERS = 0.1f
-private const val SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS = 0.003f
+private const val SNAPSHOT_DIRECTION_LINE_LENGTH_METERS = 0.01f
+private const val SNAPSHOT_DIRECTION_LINE_THICKNESS_METERS = 0.001f
 private const val OPPOSITE_DIRECTION_EPSILON = 1e-4f
 private const val ROTATION_SCALE_EPSILON = 1e-6f
 private const val QUATERNION_COMPONENT_EPSILON = 1e-3f
