@@ -27,10 +27,10 @@ import kotlin.math.sqrt
  * @param componentDissolveDistanceMeters distance below which resolved components are considered duplicates.
  */
 class WorldPointHypothesisResolver(
-    private val minNormalizationConfidence: Float = 0.0f,
+    minNormalizationConfidence: Float = 0.0f,
     private val maxNormalizationConfidence: Float = 0.4f,
-    private val clusterRadiusMeters: Float = DEFAULT_CLUSTER_RADIUS_METERS,
-    private val conflictConfidenceThreshold: Float = DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD,
+    clusterRadiusMeters: Float = DEFAULT_CLUSTER_RADIUS_METERS,
+    conflictConfidenceThreshold: Float = DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD,
     private val replacementImprovementEpsilon: Float = DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON,
     private val minSupportEdgesForReplacement: Int = DEFAULT_MIN_SUPPORT_EDGES_FOR_REPLACEMENT,
     private val maxFreeWorldPoints: Int = DEFAULT_MAX_FREE_WORLD_POINTS,
@@ -42,6 +42,18 @@ class WorldPointHypothesisResolver(
     var worldPointByObservations = mutableMapOf<Set<ZoneTriangulationPoint>, WorldPoint>()
     private val additionGenerationByWorldPoint = mutableMapOf<WorldPoint, Long>()
     private var currentGeneration = 0L
+    private val baseMinNormalizationConfidence = minNormalizationConfidence
+    private val baseClusterRadiusMeters = clusterRadiusMeters
+    private val baseConflictConfidenceThreshold = conflictConfidenceThreshold
+    private var currentThresholds = dynamicTriangulationThresholds(
+        acceptedFrameCount = 0,
+        minNormalizationConfidence = baseMinNormalizationConfidence,
+        maxNormalizationConfidence = maxNormalizationConfidence,
+        clusterRadiusMeters = baseClusterRadiusMeters,
+        conflictConfidenceThreshold = baseConflictConfidenceThreshold,
+        additionConfidenceThreshold = MIN_ADDITION_THRESHOLD,
+        componentConfidenceThreshold = MIN_COMPONENT_THRESHOLD,
+    )
 
     init {
         require(maxFreeWorldPoints >= 0) {
@@ -59,10 +71,10 @@ class WorldPointHypothesisResolver(
      * WorldPoints with normalized confidence.
      */
     private fun normalize(newWorldPoints: List<WorldPoint>): List<WorldPoint> {
-        val confidenceRange = maxNormalizationConfidence - minNormalizationConfidence
+        val confidenceRange = maxNormalizationConfidence - currentThresholds.minNormalizationConfidence
         return newWorldPoints.map { worldPoint ->
             worldPoint.copy(
-                confidence = ((worldPoint.confidence - minNormalizationConfidence) / confidenceRange)
+                confidence = ((worldPoint.confidence - currentThresholds.minNormalizationConfidence) / confidenceRange)
                     .coerceIn(0f, 1f)
             )
         }
@@ -83,10 +95,26 @@ class WorldPointHypothesisResolver(
      * Resolves 2-view [WorldPoint]s into multi-view components.
      *
      * @param newWorldPoints raw triangulated points.
+     * @param acceptedFrameCount number of accepted frames including the current frame.
      * @return resolved dense components ordered by descending confidence.
      */
-    fun resolve(newWorldPoints: List<WorldPoint>): List<WorldPoint> {
+    fun resolve(
+        newWorldPoints: List<WorldPoint>,
+        acceptedFrameCount: Int = (currentGeneration + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+    ): List<WorldPoint> {
+        require(acceptedFrameCount >= 0) {
+            "acceptedFrameCount must not be negative"
+        }
         currentGeneration++
+        currentThresholds = dynamicTriangulationThresholds(
+            acceptedFrameCount = acceptedFrameCount,
+            minNormalizationConfidence = baseMinNormalizationConfidence,
+            maxNormalizationConfidence = maxNormalizationConfidence,
+            clusterRadiusMeters = baseClusterRadiusMeters,
+            conflictConfidenceThreshold = baseConflictConfidenceThreshold,
+            additionConfidenceThreshold = MIN_ADDITION_THRESHOLD,
+            componentConfidenceThreshold = MIN_COMPONENT_THRESHOLD,
+        )
         val normalizedPoints = normalize(newWorldPoints)
         worldPoints += normalizedPoints
         normalizedPoints.forEach { worldPoint ->
@@ -249,7 +277,7 @@ class WorldPointHypothesisResolver(
         newPoint: WorldPoint,
     ): HypothesisComponent? {
         val candidateComponents = resolvedComponents
-            .filter { component -> (newPoint.position - component.center).length <= clusterRadiusMeters }
+            .filter { component -> (newPoint.position - component.center).length <= currentThresholds.clusterRadiusMeters }
             .sortedBy { component -> (newPoint.position - component.center).length }
 
         candidateComponents.forEach { component ->
@@ -416,7 +444,10 @@ class WorldPointHypothesisResolver(
                     }
                     return@forEach
                 }
-                if (pairSupport.confidence >= conflictConfidenceThreshold && isPointClose(pairSupport)) {
+                if (
+                    pairSupport.confidence >= currentThresholds.conflictConfidenceThreshold &&
+                    isPointClose(pairSupport)
+                ) {
                     supportEdges += pairSupport
                 } else {
                     conflictingObservations += selectedObservation
@@ -429,7 +460,7 @@ class WorldPointHypothesisResolver(
             val supportSum = sumConfidenceByEdges(supportEdges)
             return when (conflictingObservations.size) {
                 0 -> {
-                    if (supportSum / supportEdges.size < MIN_ADDITION_THRESHOLD)
+                    if (supportSum / supportEdges.size < currentThresholds.additionConfidenceThreshold)
                         return false
 
                     addObservation(candidateObservation, supportEdges)
@@ -460,14 +491,15 @@ class WorldPointHypothesisResolver(
          * Is true when [worldPoint] lies close enough to [center] to belong to the component.
          */
         private fun isPointClose(worldPoint: WorldPoint): Boolean {
-            return (worldPoint.position - center).length <= clusterRadiusMeters
+            return (worldPoint.position - center).length <= currentThresholds.clusterRadiusMeters
         }
 
         /**
          * Checks if component is too bad to approve it
          */
         fun isBad(): Boolean {
-            return confidence < MIN_COMPONENT_THRESHOLD || curPoints().size < MIN_COMPONENT_SIZE
+            return confidence < currentThresholds.componentConfidenceThreshold ||
+                curPoints().size < MIN_COMPONENT_SIZE
         }
     }
 }

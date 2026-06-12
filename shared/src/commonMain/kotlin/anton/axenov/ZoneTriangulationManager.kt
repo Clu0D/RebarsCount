@@ -108,17 +108,26 @@ class ZoneTriangulationManager(
      *
      * @param frameSnapshot frame snapshot that produced the segmentation.
      * @param prediction segmentation result for the frame.
-     * @param epsilonMeters maximal physical distance between corresponding viewing rays.
-     * @param forbiddenEpsilonMeters distance after which a compared pair becomes explicitly forbidden.
+     * @param epsilonMeters explicit maximal ray distance, or null to use the dynamic threshold.
+     * @param forbiddenEpsilonMeters explicit forbidden-pair distance, or null to use the dynamic threshold.
      * @return true when the frame passed consistency checks and was accepted.
      */
     fun addSegmentationResult(
         zone: Zone,
         frameSnapshot: DetectionFrameSnapshotDto,
         prediction: SegmentationPrediction,
-        epsilonMeters: Double = defaultEpsilonMeters,
-        forbiddenEpsilonMeters: Double = maxOf(defaultForbiddenEpsilonMeters, epsilonMeters),
+        epsilonMeters: Double? = null,
+        forbiddenEpsilonMeters: Double? = null,
     ): Boolean {
+        val acceptedFrameCount = segmentationResults.size + 1
+        val dynamicThresholds = dynamicTriangulationThresholds(
+            acceptedFrameCount = acceptedFrameCount,
+            correspondenceEpsilonMeters = defaultEpsilonMeters,
+            forbiddenEpsilonMeters = defaultForbiddenEpsilonMeters,
+        )
+        val effectiveEpsilonMeters = epsilonMeters ?: dynamicThresholds.correspondenceEpsilonMeters
+        val effectiveForbiddenEpsilonMeters = forbiddenEpsilonMeters
+            ?: maxOf(dynamicThresholds.forbiddenEpsilonMeters, effectiveEpsilonMeters)
         val newPoints = mutableListOf<WorldPoint>()
         val newSegmentation = ZoneSegmentation(
             segmentationIndex = segmentationResults.size,
@@ -134,8 +143,8 @@ class ZoneTriangulationManager(
             newPoints += getPointsCandidatesBySegmentation(
                 segmentation = newSegmentation,
                 anotherSegmentation = segmentation,
-                epsilonMeters = epsilonMeters,
-                forbiddenEpsilonMeters = forbiddenEpsilonMeters,
+                epsilonMeters = effectiveEpsilonMeters,
+                forbiddenEpsilonMeters = effectiveForbiddenEpsilonMeters,
             )
         }
         val supportedObservationCount = newPoints
@@ -155,7 +164,7 @@ class ZoneTriangulationManager(
         }
 
         segmentationResults += newSegmentation
-        resolveWorldPoints(newSegmentation.zone, newPoints)
+        resolveWorldPoints(newSegmentation.zone, newPoints, acceptedFrameCount)
         return true
     }
 
@@ -273,10 +282,14 @@ class ZoneTriangulationManager(
 
     /**
      * Rebuilds resolved multi-view point centers from all currently accumulated 2-view WorldPoints.
+     *
+     * @param zone zone owning the new hypotheses.
+     * @param newPoints pairwise hypotheses produced for the accepted frame.
+     * @param acceptedFrameCount number of accepted frames including the current frame.
      */
-    private fun resolveWorldPoints(zone: Zone, newPoints: MutableList<WorldPoint>) {
+    private fun resolveWorldPoints(zone: Zone, newPoints: MutableList<WorldPoint>, acceptedFrameCount: Int) {
         val resolver = worldPointHypothesisResolversByZoneId.getOrPut(zone.id) { WorldPointHypothesisResolver() }
-        resolver.resolve(newPoints)
+        resolver.resolve(newPoints, acceptedFrameCount)
     }
 }
 
