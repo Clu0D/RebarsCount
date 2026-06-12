@@ -4,7 +4,7 @@ import korlibs.math.geom.Vector3F
 import kotlin.collections.component1
 import kotlin.collections.plusAssign
 import kotlin.collections.set
-import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * Greedily combines 2-view [WorldPoint] hypotheses to multi-view point components.
@@ -324,8 +324,9 @@ class WorldPointHypothesisResolver(
             }
             center = weightedPositionSum / totalWeight
 
-            confidence = (sumConfidenceByEdges(curPoints().toList()) / max(1, supportByPair.size))
-                .coerceIn(0f, 1f)
+            val supportEdgeCount = supportByPair.size
+            val averageSupportWeight = totalWeight / supportEdgeCount
+            confidence = averageSupportWeight * sqrt(supportEdgeCount.toFloat())
         }
 
         /**
@@ -477,7 +478,7 @@ private fun sumConfidenceByEdges(points: List<WorldPoint>): Float {
 
 private const val DEFAULT_CLUSTER_RADIUS_METERS = 0.03f
 private const val DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD = 0.7f
-private const val MIN_COMPONENT_THRESHOLD = 0.75f
+private const val MIN_COMPONENT_THRESHOLD = 1.5f
 private const val MIN_ADDITION_THRESHOLD = 0.5f
 private const val MIN_COMPONENT_SIZE = 4
 private const val DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON = 1e-4f
