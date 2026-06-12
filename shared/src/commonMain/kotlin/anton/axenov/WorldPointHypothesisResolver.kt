@@ -22,6 +22,9 @@ import kotlin.math.max
  * @param conflictConfidenceThreshold normalized confidence below which edge is treated as a conflict.
  * @param replacementImprovementEpsilon minimal improvement required to perform a replacement move.
  * @param minSupportEdgesForReplacement minimal number of strong edges required before replacement.
+ * @param maxFreeWorldPoints maximal number of unresolved pairwise hypotheses retained between resolve calls.
+ * @param newWorldPointSurvivalBonus temporary priority bonus assigned to recently added hypotheses.
+ * @param componentDissolveDistanceMeters distance below which resolved components are considered duplicates.
  */
 class WorldPointHypothesisResolver(
     private val minNormalizationConfidence: Float = 0.0f,
@@ -30,10 +33,27 @@ class WorldPointHypothesisResolver(
     private val conflictConfidenceThreshold: Float = DEFAULT_CONFLICT_CONFIDENCE_THRESHOLD,
     private val replacementImprovementEpsilon: Float = DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON,
     private val minSupportEdgesForReplacement: Int = DEFAULT_MIN_SUPPORT_EDGES_FOR_REPLACEMENT,
+    private val maxFreeWorldPoints: Int = DEFAULT_MAX_FREE_WORLD_POINTS,
+    private val newWorldPointSurvivalBonus: Float = DEFAULT_NEW_WORLD_POINT_SURVIVAL_BONUS,
+    private val componentDissolveDistanceMeters: Float = DEFAULT_COMPONENT_DISSOLVE_DISTANCE_METERS,
 ) {
     val worldPoints = mutableSetOf<WorldPoint>()
     val resolvedComponents = mutableListOf<HypothesisComponent>()
     var worldPointByObservations = mutableMapOf<Set<ZoneTriangulationPoint>, WorldPoint>()
+    private val additionGenerationByWorldPoint = mutableMapOf<WorldPoint, Long>()
+    private var currentGeneration = 0L
+
+    init {
+        require(maxFreeWorldPoints >= 0) {
+            "maxFreeWorldPoints must not be negative"
+        }
+        require(newWorldPointSurvivalBonus >= 0f) {
+            "newWorldPointSurvivalBonus must not be negative"
+        }
+        require(componentDissolveDistanceMeters >= 0f) {
+            "componentDissolveDistanceMeters must not be negative"
+        }
+    }
 
     /**
      * WorldPoints with normalized confidence.
@@ -66,16 +86,24 @@ class WorldPointHypothesisResolver(
      * @return resolved dense components ordered by descending confidence.
      */
     fun resolve(newWorldPoints: List<WorldPoint>): List<WorldPoint> {
+        currentGeneration++
         val normalizedPoints = normalize(newWorldPoints)
         worldPoints += normalizedPoints
-        worldPointByObservations = buildWorldPointByObservations()
-
-        normalizedPoints.sortedByDescending { it.confidence }.forEach { newPoint ->
-            mergeNewPointIntoResolvedComponents(newPoint)?.let { component ->
-//                todo remove from normalized points too?
-                removeUsedObservations(component)
-            }
+        normalizedPoints.forEach { worldPoint ->
+            additionGenerationByWorldPoint[worldPoint] = currentGeneration
         }
+        worldPointByObservations = buildWorldPointByObservations()
+        val releasedComponentPoints = auditAndDissolveComponents(normalizedPoints)
+
+        (normalizedPoints + releasedComponentPoints)
+            .distinct()
+            .sortedByDescending { it.confidence }
+            .forEach { newPoint ->
+                mergeNewPointIntoResolvedComponents(newPoint)?.let { component ->
+                    removeUsedObservations(component)
+                }
+            }
+        trimFreeWorldPoints()
 
         val usedPoints = mutableSetOf<WorldPoint>()
         while (true) {
@@ -93,15 +121,122 @@ class WorldPointHypothesisResolver(
     }
 
     /**
+     * Audits resolved components and returns dissolved edges to the ordinary resolution pipeline.
+     *
+     * Weak components are dissolved. Both components of every impossibly close pair are dissolved
+     * so their observations can be glued into one component. When component count exceeds the
+     * maximum observation count on participating frames, weakest excess components are dissolved.
+     *
+     * @param newWorldPoints newly added normalized hypotheses included in the frame-count audit.
+     * @return released component edges that should be processed like newly added hypotheses.
+     */
+    internal fun auditAndDissolveComponents(newWorldPoints: List<WorldPoint> = emptyList()): List<WorldPoint> {
+        if (resolvedComponents.isEmpty()) {
+            return emptyList()
+        }
+        val componentsToDissolve = resolvedComponents
+            .filterTo(mutableSetOf()) { component -> component.isBad() }
+
+        resolvedComponents.forEachIndexed { firstIndex, firstComponent ->
+            resolvedComponents
+                .drop(firstIndex + 1)
+                .filter { secondComponent ->
+                    (firstComponent.center - secondComponent.center).length <= componentDissolveDistanceMeters
+                }
+                .forEach { secondComponent ->
+                    componentsToDissolve += firstComponent
+                    componentsToDissolve += secondComponent
+                }
+        }
+
+        val maximumFrameObservationCount = (
+            resolvedComponents.flatMap { component -> component.curObservations() } +
+                newWorldPoints.flatMap { point -> point.parentPoints }
+            )
+            .groupingBy { observation -> observation.segmentation }
+            .eachCount()
+            .values
+            .maxOrNull()
+            ?: 0
+        val remainingComponents = resolvedComponents.filterNot { component -> component in componentsToDissolve }
+        val excessComponentCount = (remainingComponents.size - maximumFrameObservationCount).coerceAtLeast(0)
+        componentsToDissolve += remainingComponents
+            .sortedBy { component -> component.confidence }
+            .take(excessComponentCount)
+
+        return dissolveComponents(componentsToDissolve)
+    }
+
+    /**
+     * Removes components and returns their support edges to the unresolved pool.
+     *
+     * @param components components selected by the audit.
+     * @return released support edges.
+     */
+    private fun dissolveComponents(components: Set<HypothesisComponent>): List<WorldPoint> {
+        if (components.isEmpty()) {
+            return emptyList()
+        }
+        val releasedPoints = components
+            .flatMap { component -> component.curPoints() }
+            .distinct()
+        resolvedComponents.removeAll(components)
+        worldPoints += releasedPoints
+        releasedPoints.forEach { point ->
+            additionGenerationByWorldPoint[point] = currentGeneration
+        }
+        worldPointByObservations = buildWorldPointByObservations()
+        return releasedPoints
+    }
+
+    /**
      * Removes points associated with observations from one component.
      */
     fun removeUsedObservations(component: HypothesisComponent) {
         val usedObservations = component.curObservations()
-        worldPoints.removeAll { point ->
+        val removedPoints = worldPoints.filterTo(mutableSetOf()) { point ->
             point in component.curPoints() ||
                     point.parentPoints.any { it in usedObservations }
         }
+        worldPoints.removeAll(removedPoints)
+        additionGenerationByWorldPoint.keys.removeAll(removedPoints)
         worldPointByObservations = buildWorldPointByObservations()
+    }
+
+    /**
+     * Evicts lowest-priority unresolved hypotheses when the free pool exceeds its configured limit.
+     *
+     * Priority combines normalized confidence with a survival bonus that decays as
+     * `newWorldPointSurvivalBonus / (age + 1)`. This lets recent hypotheses displace weak stale
+     * hypotheses while preserving sufficiently strong older hypotheses.
+     */
+    internal fun trimFreeWorldPoints() {
+        if (worldPoints.size <= maxFreeWorldPoints) {
+            return
+        }
+        val retainedPoints = worldPoints
+            .sortedWith(
+                compareByDescending<WorldPoint> { point -> freeWorldPointRetentionPriority(point) }
+                    .thenByDescending { point -> additionGenerationByWorldPoint[point] ?: 0L }
+                    .thenByDescending { point -> point.confidence },
+            )
+            .take(maxFreeWorldPoints)
+            .toSet()
+        worldPoints.retainAll(retainedPoints)
+        additionGenerationByWorldPoint.keys.retainAll(retainedPoints)
+        worldPointByObservations = buildWorldPointByObservations()
+    }
+
+    /**
+     * Calculates current eviction priority for one unresolved hypothesis.
+     *
+     * @param worldPoint unresolved pairwise hypothesis.
+     * @return confidence plus age-decaying survival bonus.
+     */
+    internal fun freeWorldPointRetentionPriority(worldPoint: WorldPoint): Float {
+        val additionGeneration = additionGenerationByWorldPoint[worldPoint] ?: 0L
+        val age = (currentGeneration - additionGeneration).coerceAtLeast(0L)
+        return worldPoint.confidence + newWorldPointSurvivalBonus / (age + 1L)
     }
 
     /**
@@ -347,3 +482,6 @@ private const val MIN_ADDITION_THRESHOLD = 0.5f
 private const val MIN_COMPONENT_SIZE = 4
 private const val DEFAULT_REPLACEMENT_IMPROVEMENT_EPSILON = 1e-4f
 private const val DEFAULT_MIN_SUPPORT_EDGES_FOR_REPLACEMENT = 2
+private const val DEFAULT_MAX_FREE_WORLD_POINTS = 5_000
+private const val DEFAULT_NEW_WORLD_POINT_SURVIVAL_BONUS = 0.15f
+private const val DEFAULT_COMPONENT_DISSOLVE_DISTANCE_METERS = 0.005f
