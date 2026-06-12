@@ -74,7 +74,7 @@ class ArDetectionPipeline(
         onZoneDeletion = ::onZoneDeleted,
     )
     private val renderedNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
-    private val renderedSnapshotNodesByZone = IdentityHashMap<Zone, IdentityHashMap<ZoneSnapshot, AnchorNode>>()
+    private val renderedCaptureGuidanceNodesByZone = IdentityHashMap<Zone, MutableList<AnchorNode>>()
     private val renderedServerWorldPointNodes = mutableListOf<AnchorNode>()
     private val frameQualityFilter = FrameImageQualityFilter()
     private var lastServerWorldPoints: List<ServerWorldPointDto> = emptyList()
@@ -150,7 +150,7 @@ class ArDetectionPipeline(
         snapshotsManager.clear()
         zonesManager.clear()
         renderedNodesByZone.clear()
-        renderedSnapshotNodesByZone.clear()
+        renderedCaptureGuidanceNodesByZone.clear()
         clearRenderedServerWorldPoints()
         lastServerWorldPoints = emptyList()
         baselineLandscapeRotation = null
@@ -394,6 +394,7 @@ class ArDetectionPipeline(
             zone = zone,
         )
         renderedNodesByZone[zone] = nodes.toMutableList()
+        refreshZoneCaptureGuidance(zone)
     }
 
     /**
@@ -402,8 +403,8 @@ class ArDetectionPipeline(
      * @param zone removed zone whose scene objects should be cleaned up.
      */
     private fun onZoneDeleted(zone: Zone) {
+        clearZoneCaptureGuidance(zone)
         snapshotsManager.removeZone(zone)
-        renderedSnapshotNodesByZone.remove(zone)
         val zoneNodes = renderedNodesByZone.remove(zone) ?: return
         zoneNodes.forEach { node ->
             destroyAnchorNode(node)
@@ -411,7 +412,7 @@ class ArDetectionPipeline(
     }
 
     /**
-     * Draws one direction marker for newly added zone snapshot.
+     * Refreshes recommended capture guidance after one new zone snapshot is stored.
      *
      * @param zone zone that owns the snapshot.
      * @param snapshot newly persisted snapshot.
@@ -424,14 +425,7 @@ class ArDetectionPipeline(
         if (!isSceneActive.get()) {
             return
         }
-        val activeSceneView = sceneView ?: return
-        drawSnapshotCameraDirectionNode(
-            sceneView = activeSceneView,
-            frameSnapshot = snapshot.frameSnapshot,
-        )?.also { directionNode ->
-            val zoneNodes = renderedSnapshotNodesByZone.getOrPut(zone) { IdentityHashMap() }
-            zoneNodes[snapshot] = directionNode
-        }
+        refreshZoneCaptureGuidance(zone)
         if (isPointRecognitionEnabled() &&
             !snapshotUploadQueue.enqueue(zone.id, snapshot.toPayload(zone))
         ) {
@@ -441,7 +435,7 @@ class ArDetectionPipeline(
     }
 
     /**
-     * Removes one rendered direction marker for removed zone snapshot.
+     * Refreshes recommended capture guidance after one zone snapshot is removed.
      *
      * @param zone zone that owned removed snapshot.
      * @param snapshot removed persisted snapshot.
@@ -459,12 +453,39 @@ class ArDetectionPipeline(
                 deleteDeferredSnapshotRequest(snapshot)
             }
         }
-        val zoneNodes = renderedSnapshotNodesByZone[zone] ?: return
-        val node = zoneNodes.remove(snapshot) ?: return
-        destroyAnchorNode(node)
-        if (zoneNodes.isEmpty()) {
-            renderedSnapshotNodesByZone.remove(zone)
+        if (zonesManager.getZones().contains(zone)) {
+            refreshZoneCaptureGuidance(zone)
         }
+    }
+
+    /**
+     * Rebuilds all rendered capture-guidance rays for one zone.
+     *
+     * @param zone zone whose recommendations should be visualized.
+     */
+    private fun refreshZoneCaptureGuidance(zone: Zone) {
+        clearZoneCaptureGuidance(zone)
+        if (!zone.isPlaced() || !isSceneActive.get()) {
+            return
+        }
+        val activeSceneView = sceneView ?: return
+        val guidanceNodes = drawSuggestedCaptureDirectionNodes(
+            sceneView = activeSceneView,
+            suggestedDirections = snapshotsManager.getSuggestedCaptureDirections(zone),
+        )
+        if (guidanceNodes.isNotEmpty()) {
+            renderedCaptureGuidanceNodesByZone[zone] = guidanceNodes.toMutableList()
+        }
+    }
+
+    /**
+     * Removes all rendered capture-guidance rays for one zone.
+     *
+     * @param zone zone whose guidance should be removed.
+     */
+    private fun clearZoneCaptureGuidance(zone: Zone) {
+        val guidanceNodes = renderedCaptureGuidanceNodesByZone.remove(zone) ?: return
+        guidanceNodes.forEach(::destroyAnchorNode)
     }
 
     /**

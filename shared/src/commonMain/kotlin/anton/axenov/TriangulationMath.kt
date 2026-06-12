@@ -16,7 +16,8 @@ class TriangulationMath {
      * @param firstImagePoints points from the first image.
      * @param secondImagePoints candidate points from the second image.
      * @param epsilonMeters maximal distance in meters between the two viewing rays.
-     * @return map from each first-image point to all second-image points that can correspond to it.
+     * @param maxDistanceMeters maximal distance before a pair becomes explicitly forbidden.
+     * @return map from each first-image point to all second-image points that are not explicitly forbidden.
      */
     fun correspondenceCandidates(
         firstSnapshot: DetectionFrameSnapshotDto,
@@ -24,7 +25,11 @@ class TriangulationMath {
         firstImagePoints: List<ImagePoint>,
         secondImagePoints: List<ImagePoint>,
         epsilonMeters: Double,
+        maxDistanceMeters: Double = epsilonMeters,
     ): List<List<Pair<Int, RaysMidPoint>>> {
+        require(maxDistanceMeters >= epsilonMeters) {
+            "maxDistanceMeters must be greater than or equal to epsilonMeters"
+        }
         val firstRays = firstImagePoints.map { imagePoint ->
             worldRay(firstSnapshot, imagePoint)
         }
@@ -38,7 +43,7 @@ class TriangulationMath {
                     secondRay = secondRay,
                     distanceEpsilonMeters = epsilonMeters,
                 ) ?: return@mapIndexedNotNull null
-                Pair(index, raysMidPoint).takeIf { raysMidPoint.distance <= epsilonMeters }
+                Pair(index, raysMidPoint).takeIf { raysMidPoint.distance <= maxDistanceMeters }
             }
         }
     }

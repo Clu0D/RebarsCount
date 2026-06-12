@@ -274,7 +274,12 @@ class WorldPointHypothesisResolver(
 
             curObservations().forEach { selectedObservation ->
                 val pairSupport = worldPointByObservations[setOf(candidateObservation, selectedObservation)]
-                    ?: return@forEach
+                if (pairSupport == null) {
+                    if (candidateObservation.hasForbiddenEdgeTo(selectedObservation)) {
+                        conflictingObservations += selectedObservation
+                    }
+                    return@forEach
+                }
                 if (pairSupport.confidence >= conflictConfidenceThreshold && isPointClose(pairSupport)) {
                     supportEdges += pairSupport
                 } else {

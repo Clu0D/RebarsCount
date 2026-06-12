@@ -110,6 +110,66 @@ class SnapshotsManager(
     }
 
     /**
+     * Returns recommended additional camera positions for one zone.
+     *
+     * Candidate positions are sampled on the visible hemisphere around the zone and
+     * greedily selected by the largest minimal `Delta_combined` distance to already
+     * stored snapshots and previously selected recommendations.
+     *
+     * @param zone zone that should receive additional capture guidance.
+     * @param limit maximum number of recommendations.
+     * @return recommended camera rays for operator guidance.
+     */
+    fun getSuggestedCaptureDirections(
+        zone: Zone,
+        limit: Int = MAX_GUIDANCE_DIRECTION_COUNT,
+    ): List<SuggestedCaptureDirection> {
+        if (!zone.isPlaced() || limit <= 0) {
+            return emptyList()
+        }
+        val targetPosition = zone.guidanceTargetPosition()
+        val storedSnapshots = getZoneSnapshots(zone)
+        val guidanceRadius = estimateGuidanceRadiusMeters(zone, storedSnapshots, targetPosition)
+        val candidateSamples = generateGuidanceCandidateSamples(
+            zone = zone,
+            targetPosition = targetPosition,
+            radiusMeters = guidanceRadius,
+        )
+        if (candidateSamples.isEmpty()) {
+            return emptyList()
+        }
+
+        val existingSamples = storedSnapshots.map { snapshot ->
+            createGuidanceSample(
+                zone = zone,
+                cameraPosition = snapshot.frameSnapshot.cameraWorldPosition(),
+                targetPosition = targetPosition,
+            )
+        }
+        val selectedSamples = mutableListOf<GuidanceSample>()
+        val remainingSamples = candidateSamples.toMutableList()
+
+        while (selectedSamples.size < limit && remainingSamples.isNotEmpty()) {
+            val nextSample = selectBestGuidanceSample(
+                zone = zone,
+                remainingSamples = remainingSamples,
+                existingSamples = existingSamples,
+                selectedSamples = selectedSamples,
+            ) ?: break
+            selectedSamples += nextSample
+            remainingSamples.remove(nextSample)
+        }
+
+        return selectedSamples.map { sample ->
+            SuggestedCaptureDirection(
+                cameraPosition = sample.cameraPosition,
+                targetPosition = targetPosition,
+                deltaCombinedScore = sample.selectionScore,
+            )
+        }
+    }
+
+    /**
      * Returns payloads for every currently stored snapshot with its owning zone.
      *
      * @return current snapshot payloads in zone iteration order.
@@ -272,7 +332,39 @@ private fun calculateSnapshotSimilarityMetrics(
 ): SnapshotSimilarityMetrics {
     val secondCameraPosition = secondSnapshot.frameSnapshot.cameraWorldPosition()
     val secondDistanceMeters = distanceMeters(secondCameraPosition, zone.planePose.center)
-    val delta = firstCaptureAngle.sphericalAngleTo(secondSnapshot.captureAngle)
+    return calculateSimilarityMetrics(
+        zone = zone,
+        firstCaptureAngle = firstCaptureAngle,
+        firstCameraPosition = firstCameraPosition,
+        firstDistanceMeters = firstDistanceMeters,
+        secondCaptureAngle = secondSnapshot.captureAngle,
+        secondCameraPosition = secondCameraPosition,
+        secondDistanceMeters = secondDistanceMeters,
+    )
+}
+
+/**
+ * Calculates combined angular and planar similarity metrics between 2 camera viewpoints.
+ *
+ * @param zone zone shared by both viewpoints.
+ * @param firstCaptureAngle first capture-angle metrics.
+ * @param firstCameraPosition first camera position.
+ * @param firstDistanceMeters first camera-to-zone distance.
+ * @param secondCaptureAngle second capture-angle metrics.
+ * @param secondCameraPosition second camera position.
+ * @param secondDistanceMeters second camera-to-zone distance.
+ * @return combined angular/planar difference metrics.
+ */
+private fun calculateSimilarityMetrics(
+    zone: Zone,
+    firstCaptureAngle: ZoneCaptureAngle,
+    firstCameraPosition: Vector3F,
+    firstDistanceMeters: Float,
+    secondCaptureAngle: ZoneCaptureAngle,
+    secondCameraPosition: Vector3F,
+    secondDistanceMeters: Float,
+): SnapshotSimilarityMetrics {
+    val delta = firstCaptureAngle.sphericalAngleTo(secondCaptureAngle)
     val deltaLinear = calculatePlanarCameraShiftMeters(
         firstCameraPosition = firstCameraPosition,
         secondCameraPosition = secondCameraPosition,
@@ -290,6 +382,189 @@ private fun calculateSnapshotSimilarityMetrics(
         deltaNormalized = deltaNormalized,
         deltaCombined = deltaCombined,
     )
+}
+
+/**
+ * Selects the next guidance sample that is farthest from current references.
+ *
+ * @param zone target zone.
+ * @param remainingSamples candidates not selected yet.
+ * @param existingSamples samples coming from already stored snapshots.
+ * @param selectedSamples samples already picked as guidance.
+ * @return best next guidance sample or null when no more useful candidates exist.
+ */
+private fun selectBestGuidanceSample(
+    zone: Zone,
+    remainingSamples: List<GuidanceSample>,
+    existingSamples: List<GuidanceSample>,
+    selectedSamples: List<GuidanceSample>,
+): GuidanceSample? {
+    if (remainingSamples.isEmpty()) {
+        return null
+    }
+    val references = existingSamples + selectedSamples
+    if (references.isEmpty()) {
+        return remainingSamples.minByOrNull { candidate -> candidate.captureAngle.angleDegrees }
+            ?.copy(selectionScore = Float.POSITIVE_INFINITY)
+    }
+
+    val bestSample = remainingSamples
+        .map { candidate ->
+            val nearestScore = references.minOf { reference ->
+                calculateSimilarityMetrics(
+                    zone = zone,
+                    firstCaptureAngle = candidate.captureAngle,
+                    firstCameraPosition = candidate.cameraPosition,
+                    firstDistanceMeters = candidate.distanceMeters,
+                    secondCaptureAngle = reference.captureAngle,
+                    secondCameraPosition = reference.cameraPosition,
+                    secondDistanceMeters = reference.distanceMeters,
+                ).deltaCombined
+            }
+            candidate.copy(selectionScore = nearestScore)
+        }
+        .maxWithOrNull(
+            compareBy<GuidanceSample> { it.selectionScore }
+                .thenBy { -it.captureAngle.angleDegrees },
+        )
+        ?: return null
+    return if (bestSample.selectionScore > MAX_SIMILAR_SNAPSHOT_DELTA_COMBINED) {
+        bestSample
+    } else {
+        null
+    }
+}
+
+/**
+ * Generates hemisphere camera-position candidates around one zone.
+ *
+ * @param zone target zone.
+ * @param targetPosition point that recommended rays should point to.
+ * @param radiusMeters hemisphere radius.
+ * @return candidate guidance samples.
+ */
+private fun generateGuidanceCandidateSamples(
+    zone: Zone,
+    targetPosition: Vector3F,
+    radiusMeters: Float,
+): List<GuidanceSample> {
+    if (radiusMeters <= 0f) {
+        return emptyList()
+    }
+    val normal = zone.planePose.normal.normalized()
+    val axisX = orthogonalAxis(normal)
+    val axisY = normal.cross(axisX).normalized()
+    val random = Random(zone.id.hashCode())
+    val samples = mutableListOf<GuidanceSample>()
+
+    samples += createGuidanceSample(
+        zone = zone,
+        cameraPosition = targetPosition + normal * radiusMeters,
+        targetPosition = targetPosition,
+    )
+    repeat(GUIDANCE_CANDIDATE_SAMPLE_COUNT) {
+        val azimuthRadians = random.nextFloat() * FULL_CIRCLE_RADIANS
+        val normalDot = random.nextFloat().coerceIn(0f, 1f)
+        val planarScale = sqrt((1f - normalDot * normalDot).coerceAtLeast(0f))
+        val candidateDirection =
+            (normal * normalDot) +
+                (axisX * (kotlin.math.cos(azimuthRadians).toFloat() * planarScale)) +
+                (axisY * (kotlin.math.sin(azimuthRadians).toFloat() * planarScale))
+        val candidatePosition = targetPosition + candidateDirection.normalized() * radiusMeters
+        val sample = createGuidanceSample(
+            zone = zone,
+            cameraPosition = candidatePosition,
+            targetPosition = targetPosition,
+        )
+        if (sample.captureAngle.angleDegrees < MAX_SNAPSHOT_CAPTURE_ANGLE_DEGREES) {
+            samples += sample
+        }
+    }
+    return samples
+}
+
+/**
+ * Builds one guidance sample from world-space camera position.
+ *
+ * @param zone target zone.
+ * @param cameraPosition candidate camera position.
+ * @param targetPosition point that guidance should look at.
+ * @return guidance sample with precomputed metrics.
+ */
+private fun createGuidanceSample(
+    zone: Zone,
+    cameraPosition: Vector3F,
+    targetPosition: Vector3F,
+): GuidanceSample {
+    return GuidanceSample(
+        cameraPosition = cameraPosition,
+        captureAngle = getZoneCaptureAngle(zone.planePose, cameraPosition),
+        distanceMeters = distanceMeters(cameraPosition, targetPosition),
+    )
+}
+
+/**
+ * Estimates hemisphere radius used for capture guidance around one zone.
+ *
+ * @param zone target zone.
+ * @param storedSnapshots already saved zone snapshots.
+ * @param targetPosition point that recommendations should point to.
+ * @return guidance hemisphere radius in meters.
+ */
+private fun estimateGuidanceRadiusMeters(
+    zone: Zone,
+    storedSnapshots: List<ZoneSnapshot>,
+    targetPosition: Vector3F,
+): Float {
+    val snapshotDistances = storedSnapshots
+        .map { snapshot -> distanceMeters(snapshot.frameSnapshot.cameraWorldPosition(), targetPosition) }
+        .sorted()
+    if (snapshotDistances.isNotEmpty()) {
+        return snapshotDistances[snapshotDistances.size / 2]
+            .coerceIn(MIN_GUIDANCE_RADIUS_METERS, MAX_GUIDANCE_RADIUS_METERS)
+    }
+
+    val polygonRadius = zone.polygonPoints
+        .map { point -> distanceMeters(point, targetPosition) }
+        .maxOrNull()
+        ?: 0f
+    val sampledPointRadius = zone.sampledPoints
+        .map { point -> distanceMeters(point, targetPosition) }
+        .maxOrNull()
+        ?: 0f
+    val baseRadius = maxOf(polygonRadius, sampledPointRadius, MIN_ZONE_GUIDANCE_BASE_RADIUS_METERS)
+    return (baseRadius * GUIDANCE_RADIUS_MULTIPLIER)
+        .coerceIn(MIN_GUIDANCE_RADIUS_METERS, MAX_GUIDANCE_RADIUS_METERS)
+}
+
+/**
+ * Returns stable target position for guidance rays.
+ *
+ * @return center of the spatial polygon or plane center when polygon is unavailable.
+ */
+private fun Zone.guidanceTargetPosition(): Vector3F {
+    if (polygonPoints.isNotEmpty()) {
+        return polygonPoints.reduce { acc, point -> acc + point } / polygonPoints.size.toFloat()
+    }
+    if (sampledPoints.isNotEmpty()) {
+        return sampledPoints.reduce { acc, point -> acc + point } / sampledPoints.size.toFloat()
+    }
+    return planePose.center
+}
+
+/**
+ * Builds a stable unit axis orthogonal to [normal].
+ *
+ * @param normal normalized base normal.
+ * @return normalized tangent axis.
+ */
+private fun orthogonalAxis(normal: Vector3F): Vector3F {
+    val fallbackUp = if (kotlin.math.abs(normal.y) < 0.95f) {
+        Vector3F(0f, 1f, 0f)
+    } else {
+        Vector3F(1f, 0f, 0f)
+    }
+    return fallbackUp.cross(normal).normalized()
 }
 
 /**
@@ -352,9 +627,44 @@ private data class SnapshotSimilarityMetrics(
     val deltaCombined: Float,
 )
 
+/**
+ * Recommended additional camera ray for one zone.
+ *
+ * @param cameraPosition recommended camera position.
+ * @param targetPosition point the camera should look at.
+ * @param deltaCombinedScore usefulness score relative to existing captures.
+ */
+data class SuggestedCaptureDirection(
+    val cameraPosition: Vector3F,
+    val targetPosition: Vector3F,
+    val deltaCombinedScore: Float,
+)
+
+/**
+ * Internal candidate or selected guidance sample.
+ *
+ * @param cameraPosition candidate camera position.
+ * @param captureAngle precomputed capture-angle metrics.
+ * @param distanceMeters distance from camera to zone target.
+ * @param selectionScore distance to the nearest already known sample.
+ */
+private data class GuidanceSample(
+    val cameraPosition: Vector3F,
+    val captureAngle: ZoneCaptureAngle,
+    val distanceMeters: Float,
+    val selectionScore: Float = 0f,
+)
+
 private const val MAX_SNAPSHOT_CAPTURE_ANGLE_DEGREES = 75f
 private const val MIN_SCREEN_COVERAGE_RATIO = 0.3f
 private const val MIN_SPHERICAL_DIFFERENCE_DEGREES = 15f
 private const val MIN_NORMALIZED_PLANAR_SHIFT = 0.1f
 private const val MAX_SIMILAR_SNAPSHOT_DELTA_COMBINED = 1f
 private const val MIN_CAMERA_DISTANCE_METERS = 0.01f
+private const val MAX_GUIDANCE_DIRECTION_COUNT = 25
+private const val GUIDANCE_CANDIDATE_SAMPLE_COUNT = 256
+private const val MIN_ZONE_GUIDANCE_BASE_RADIUS_METERS = 0.25f
+private const val GUIDANCE_RADIUS_MULTIPLIER = 3f
+private const val MIN_GUIDANCE_RADIUS_METERS = 0.6f
+private const val MAX_GUIDANCE_RADIUS_METERS = 3.5f
+private const val FULL_CIRCLE_RADIANS = (2.0 * Math.PI).toFloat()
