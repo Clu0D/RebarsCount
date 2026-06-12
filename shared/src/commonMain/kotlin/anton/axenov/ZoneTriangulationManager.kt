@@ -110,7 +110,7 @@ class ZoneTriangulationManager(
      * @param prediction segmentation result for the frame.
      * @param epsilonMeters maximal physical distance between corresponding viewing rays.
      * @param forbiddenEpsilonMeters distance after which a compared pair becomes explicitly forbidden.
-     * @return candidate sets created for points of the newly added segmentation.
+     * @return true when the frame passed consistency checks and was accepted.
      */
     fun addSegmentationResult(
         zone: Zone,
@@ -118,7 +118,7 @@ class ZoneTriangulationManager(
         prediction: SegmentationPrediction,
         epsilonMeters: Double = defaultEpsilonMeters,
         forbiddenEpsilonMeters: Double = maxOf(defaultForbiddenEpsilonMeters, epsilonMeters),
-    ) {
+    ): Boolean {
         val newPoints = mutableListOf<WorldPoint>()
         val newSegmentation = ZoneSegmentation(
             segmentationIndex = segmentationResults.size,
@@ -138,9 +138,39 @@ class ZoneTriangulationManager(
                 forbiddenEpsilonMeters = forbiddenEpsilonMeters,
             )
         }
+        val supportedObservationCount = newPoints
+            .flatMap { worldPoint -> worldPoint.parentPoints }
+            .filter { point -> point.segmentation === newSegmentation }
+            .toSet()
+            .size
+        if (
+            shouldRejectFrameByUnsupportedObservations(
+                acceptedFrameCount = segmentationResults.size,
+                observationCount = newSegmentation.points.size,
+                supportedObservationCount = supportedObservationCount,
+            )
+        ) {
+            removeSegmentationRelationships(newSegmentation)
+            return false
+        }
 
         segmentationResults += newSegmentation
         resolveWorldPoints(newSegmentation.zone, newPoints)
+        return true
+    }
+
+    /**
+     * Removes temporary candidate and ignore-state relationships to a rejected segmentation.
+     *
+     * @param rejectedSegmentation segmentation that must not remain referenced by accepted frames.
+     */
+    private fun removeSegmentationRelationships(rejectedSegmentation: ZoneSegmentation) {
+        segmentationResults.forEach { segmentation ->
+            segmentation.points.forEach { point ->
+                point.candidatesBySegmentation.remove(rejectedSegmentation)
+                point.ignoredSegmentations.remove(rejectedSegmentation)
+            }
+        }
     }
 
     /**
@@ -248,6 +278,43 @@ class ZoneTriangulationManager(
         val resolver = worldPointHypothesisResolversByZoneId.getOrPut(zone.id) { WorldPointHypothesisResolver() }
         resolver.resolve(newPoints)
     }
+}
+
+/**
+ * Checks whether a frame has too many observations without any supporting triangulation edge.
+ *
+ * The first two accepted frames form the warm-up period and are never rejected by this check.
+ * Starting with the third frame, a frame is rejected when more than 30% of its observations did
+ * not produce any supporting edge to selected previous frames.
+ *
+ * @param acceptedFrameCount number of already accepted frames.
+ * @param observationCount total observations on the candidate frame.
+ * @param supportedObservationCount observations that produced at least one supporting edge.
+ * @return true when the whole candidate frame must be rejected.
+ */
+internal fun shouldRejectFrameByUnsupportedObservations(
+    acceptedFrameCount: Int,
+    observationCount: Int,
+    supportedObservationCount: Int,
+): Boolean {
+    require(acceptedFrameCount >= 0) {
+        "acceptedFrameCount must not be negative"
+    }
+    require(observationCount >= 0) {
+        "observationCount must not be negative"
+    }
+    require(supportedObservationCount in 0..observationCount) {
+        "supportedObservationCount must be within observationCount"
+    }
+    if (acceptedFrameCount < FRAME_CONSISTENCY_WARM_UP_COUNT) {
+        return false
+    }
+    if (observationCount == 0) {
+        return true
+    }
+    val unsupportedObservationCount = observationCount - supportedObservationCount
+    return unsupportedObservationCount.toLong() * UNSUPPORTED_RATIO_DENOMINATOR >
+        observationCount.toLong() * UNSUPPORTED_RATIO_NUMERATOR
 }
 
 /**
@@ -392,3 +459,6 @@ private const val ALWAYS_COMPARE_FRAME_COUNT = 10
 private const val HALF_COMPARE_END_RANK = 20
 private const val HALF_COMPARE_PROBABILITY = 0.5f
 private const val LATER_COMPARE_PROBABILITY = 0.25f
+private const val FRAME_CONSISTENCY_WARM_UP_COUNT = 3
+private const val UNSUPPORTED_RATIO_NUMERATOR = 3L
+private const val UNSUPPORTED_RATIO_DENOMINATOR = 10L
