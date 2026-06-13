@@ -3,13 +3,24 @@ package anton.axenov
 /**
  * Represents one detected interest zone.
  *
- * @param screenBoundingBox zone location in screenshot pixel coordinates.
+ * @param screenPolygon zone segmentation polygon in screenshot pixel coordinates.
  * @param confidence segmentation confidence in range `[0, 1]`.
  */
 data class DetectedInterestZone(
-    val screenBoundingBox: ScreenBoundingBox,
+    val screenPolygon: List<ImagePoint>,
     val confidence: Float,
-)
+) {
+    init {
+        require(screenPolygon.size >= 3) {
+            "Detected interest zone polygon must contain at least three points"
+        }
+    }
+
+    /**
+     * Returns polygon bounds for auxiliary sampling and diagnostics.
+     */
+    val screenBoundingBox: ScreenBoundingBox = ScreenBoundingBox(screenPolygon)
+}
 
 /**
  * Represents a pixel-space bounding box.

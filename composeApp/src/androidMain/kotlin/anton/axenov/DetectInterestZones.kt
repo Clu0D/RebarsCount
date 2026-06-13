@@ -13,7 +13,7 @@ class DetectInterestZones(
      * Detects zones of interest on a screenshot.
      *
      * @param snapshot snapshot captured from camera frame.
-     * @return list of detected zone bounding boxes.
+     * @return list of detected zone polygons.
      */
     suspend fun detectZones(snapshot: DetectionFrameSnapshot): List<DetectedInterestZone> {
         val width = snapshot.imageWidth
@@ -24,18 +24,19 @@ class DetectInterestZones(
 
         val response = segmentationServerClient.predictZones(snapshot.toPayload())
         return response.instances.mapNotNull { instance ->
-            val box = instance.bbox
-            val clampedBox = ScreenBoundingBox(
-                left = box.x.coerceIn(0, width - 1),
-                top = box.y.coerceIn(0, height - 1),
-                right = (box.x + box.width).coerceIn(0, width - 1),
-                bottom = (box.y + box.height).coerceIn(0, height - 1),
-            )
-            if (clampedBox.left >= clampedBox.right || clampedBox.top >= clampedBox.bottom) {
+            val clampedPolygon = instance.polygon
+                .map { point ->
+                    ImagePoint(
+                        x = point.x.coerceIn(0, width - 1),
+                        y = point.y.coerceIn(0, height - 1),
+                    )
+                }
+                .distinct()
+            if (clampedPolygon.size < 3) {
                 null
             } else {
                 DetectedInterestZone(
-                    screenBoundingBox = clampedBox,
+                    screenPolygon = clampedPolygon,
                     confidence = instance.confidence
                 )
             }

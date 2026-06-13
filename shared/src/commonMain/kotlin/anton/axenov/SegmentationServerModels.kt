@@ -118,14 +118,30 @@ data class SegmentationBoundingBox(
  *
  * @param id instance identifier inside one prediction response.
  * @param bbox detected object bounding box.
+ * @param polygon detected object segmentation polygon.
  * @param confidence model confidence in range `[0, 1]`.
  */
 @Serializable
 data class SegmentationInstance(
     val id: Int,
     val bbox: SegmentationBoundingBox,
+    val polygon: List<ImagePoint>,
     val confidence: Float,
-)
+) {
+    init {
+        require(polygon.size >= 3) {
+            "Segmentation instance polygon must contain at least three points"
+        }
+    }
+
+    /**
+     * Returns the center of polygon bounds for point-style triangulation.
+     */
+    val polygonCenterPoint: ImagePoint = ImagePoint(
+        x = (polygon.minOf { point -> point.x } + polygon.maxOf { point -> point.x }) / 2,
+        y = (polygon.minOf { point -> point.y } + polygon.maxOf { point -> point.y }) / 2,
+    )
+}
 
 /**
  * Prediction payload returned by Python segmentation service.

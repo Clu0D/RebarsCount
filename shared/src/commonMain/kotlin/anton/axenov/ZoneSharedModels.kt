@@ -126,6 +126,12 @@ class ZoneProjectionInput(
     val cameraToWorldMatrix: FloatArray,
     val projectionConfidence: Float,
 ) {
+    init {
+        require(originalScreenPolygon.size >= 3) {
+            "Zone projection polygon must contain at least three points"
+        }
+    }
+
     /**
      * Returns camera world position extracted from [cameraToWorldMatrix].
      *

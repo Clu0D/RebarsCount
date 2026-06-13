@@ -24,8 +24,8 @@ fun placeZoneInWorld(
     detectedZone: DetectedInterestZone,
     translationVariant: CoordinateTranslationVariant,
 ): ZonePlacementResult {
-    val imagePoints = sampleImagePointsInScreenBoundingBox(
-        screenBoundingBox = detectedZone.screenBoundingBox,
+    val imagePoints = sampleImagePointsInScreenPolygon(
+        screenPolygon = detectedZone.screenPolygon,
         imageWidth = snapshot.imageWidth,
         imageHeight = snapshot.imageHeight,
         count = DEPTH_SAMPLE_POINT_COUNT,
@@ -271,12 +271,7 @@ private fun buildZoneProjectionInput(
         snapshot.cameraPose.toMatrix(matrix, 0)
     }
     return ZoneProjectionInput(
-        originalScreenPolygon = listOf(
-            ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.top),
-            ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.top),
-            ImagePoint(zone.screenBoundingBox.right, zone.screenBoundingBox.bottom),
-            ImagePoint(zone.screenBoundingBox.left, zone.screenBoundingBox.bottom),
-        ),
+        originalScreenPolygon = zone.screenPolygon,
         translationVariant = translationVariant,
         imageWidth = snapshot.imageWidth,
         imageHeight = snapshot.imageHeight,

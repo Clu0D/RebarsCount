@@ -21,7 +21,7 @@ data class ZoneSegmentation(
         filterWeakSegmentationInstances(prediction.instances).map { instance ->
             ZoneTriangulationPoint(
                 segmentation = this,
-                imagePoint = instance.bbox.centerPoint,
+                imagePoint = instance.polygonCenterPoint,
                 confidence = instance.confidence,
             )
         }

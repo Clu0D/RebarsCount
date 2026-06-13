@@ -107,6 +107,97 @@ fun sampleImagePointsInScreenBoundingBox(
 }
 
 /**
+ * Samples random image points inside a polygon and always includes one interior anchor point.
+ *
+ * @param screenPolygon polygon in image pixels.
+ * @param imageWidth image width.
+ * @param imageHeight image height.
+ * @param count number of points to sample.
+ * @param random random source.
+ * @return sampled image-space points inside the polygon.
+ */
+fun sampleImagePointsInScreenPolygon(
+    screenPolygon: List<ImagePoint>,
+    imageWidth: Int,
+    imageHeight: Int,
+    count: Int,
+    random: Random,
+): List<ImagePoint> {
+    if (imageWidth <= 0 || imageHeight <= 0 || screenPolygon.size < 3) {
+        return emptyList()
+    }
+    val polygon = screenPolygon.map { point ->
+        ImagePoint(
+            x = point.x.coerceIn(0, imageWidth - 1),
+            y = point.y.coerceIn(0, imageHeight - 1),
+        )
+    }
+    val bounds = ScreenBoundingBox(polygon)
+    val center = ImagePoint(bounds.centerX(), bounds.centerY())
+    val anchor = center.takeIf { point -> isImagePointInsidePolygon(point, polygon) } ?: polygon.first()
+    val points = mutableListOf(anchor)
+    val targetCount = count.coerceAtLeast(1)
+    repeat(POLYGON_SAMPLE_ATTEMPT_MULTIPLIER * targetCount) {
+        if (points.size >= targetCount) {
+            return points
+        }
+        val candidate = ImagePoint(
+            x = random.nextInt(bounds.left, bounds.right + 1),
+            y = random.nextInt(bounds.top, bounds.bottom + 1),
+        )
+        if (isImagePointInsidePolygon(candidate, polygon)) {
+            points += candidate
+        }
+    }
+    return points
+}
+
+/**
+ * Checks whether an image point lies inside or on the border of a polygon.
+ *
+ * @param point tested image point.
+ * @param polygon polygon vertices.
+ * @return true when [point] belongs to the polygon.
+ */
+internal fun isImagePointInsidePolygon(point: ImagePoint, polygon: List<ImagePoint>): Boolean {
+    if (polygon.size < 3) {
+        return false
+    }
+    var inside = false
+    var previous = polygon.last()
+    polygon.forEach { current ->
+        if (isPointOnSegment(point, previous, current)) {
+            return true
+        }
+        val crossesHorizontalRay =
+            (current.y > point.y) != (previous.y > point.y) &&
+                point.x.toDouble() <
+                (previous.x - current.x).toDouble() * (point.y - current.y) /
+                (previous.y - current.y).toDouble() + current.x
+        if (crossesHorizontalRay) {
+            inside = !inside
+        }
+        previous = current
+    }
+    return inside
+}
+
+/**
+ * Checks whether an image point lies on a line segment.
+ */
+private fun isPointOnSegment(point: ImagePoint, first: ImagePoint, second: ImagePoint): Boolean {
+    val cross = (point.y - first.y).toLong() * (second.x - first.x) -
+        (point.x - first.x).toLong() * (second.y - first.y)
+    if (cross != 0L) {
+        return false
+    }
+    return point.x in minOf(first.x, second.x)..maxOf(first.x, second.x) &&
+        point.y in minOf(first.y, second.y)..maxOf(first.y, second.y)
+}
+
+private const val POLYGON_SAMPLE_ATTEMPT_MULTIPLIER = 100
+
+/**
  * Maps image-space points to view-space pixels preserving normalized coordinates.
  *
  * @param imagePoints sampled image points.
