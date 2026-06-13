@@ -48,9 +48,7 @@ import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
 import anton.axenov.localServer.LocalClient
-import anton.axenov.localServer.PythonSegmentationPredictor
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
+import anton.axenov.localServer.createLocalPredictionProvider
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.cancel
@@ -191,9 +189,9 @@ actual fun ArSceneHost(
             ProcessingMode.DEFERRED,
                 -> LocalClient(
                     sessionId = processingSessionId,
-                    predictor = PythonSegmentationPredictor(
-                        baseUrl = pythonSegmentationServerBaseUrl,
-                        httpClient = HttpClient(OkHttp),
+                    predictor = createLocalPredictionProvider(
+                        pipeline = DEFAULT_LOCAL_PREDICTION_PIPELINE,
+                        pythonBaseUrl = pythonSegmentationServerBaseUrl,
                     ),
                 )
         }
@@ -721,4 +719,5 @@ private data class ArCoreSetupResult(
     val message: String,
 )
 
+private val DEFAULT_LOCAL_PREDICTION_PIPELINE = SegmentationPredictionPipeline.PYTHON
 private const val STATUS_REPEAT_COOLDOWN_MS = 1000L

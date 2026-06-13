@@ -2,6 +2,8 @@ package anton.axenov.localServer
 
 import anton.axenov.SegmentationPrediction
 import anton.axenov.SegmentationPredictionProvider
+import anton.axenov.SegmentationPredictionTarget
+import anton.axenov.SegmentationTargetPredictor
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
@@ -14,34 +16,45 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 /**
- * Temporary Android prediction adapter that forwards images directly to Python.
+ * Android predictor that can serve either one fixed target or the whole provider contract.
  *
  * @param baseUrl Python service base URL.
+ * @param target optional fixed segmentation target served by this predictor instance.
  * @param httpClient HTTP client used for multipart requests.
  */
 class PythonSegmentationPredictor(
     baseUrl: String,
+    private val target: SegmentationPredictionTarget? = null,
     private val httpClient: HttpClient,
-) : SegmentationPredictionProvider {
+) : SegmentationTargetPredictor, SegmentationPredictionProvider {
     private val normalizedBaseUrl = baseUrl.trimEnd('/')
     private val json = Json {
         ignoreUnknownKeys = true
     }
 
     /**
+     * Human-readable predictor name.
+     */
+    override val predictorName: String = "python-${(target ?: SegmentationPredictionTarget.ZONES).name.lowercase()}"
+
+    /**
      * Sends one image directly to the temporary Python prediction service.
      *
      * @param imageBytes PNG image bytes.
      * @param filename logical image filename.
-     * @param zonePrediction true for zone detection and false for point detection.
      * @return decoded segmentation prediction.
      */
     override suspend fun predict(
         imageBytes: ByteArray,
         filename: String,
-        zonePrediction: Boolean,
     ): SegmentationPrediction {
-        val endpoint = if (zonePrediction) "predict_zones" else "predict_points"
+        val effectiveTarget = requireNotNull(target) {
+            "Target-specific predict(imageBytes, filename) requires a fixed segmentation target"
+        }
+        val endpoint = when (effectiveTarget) {
+            SegmentationPredictionTarget.ZONES -> "predict_zones"
+            SegmentationPredictionTarget.POINTS -> "predict_points"
+        }
         val response = httpClient.submitFormWithBinaryData(
             url = "$normalizedBaseUrl/$endpoint",
             formData = formData {
@@ -74,6 +87,39 @@ class PythonSegmentationPredictor(
                 error,
             )
         }
+    }
+
+    /**
+     * Sends one image to Python prediction service selected by request kind.
+     *
+     * @param imageBytes PNG image bytes.
+     * @param filename logical image filename.
+     * @param zonePrediction true for zone detection and false for point detection.
+     * @return decoded segmentation prediction.
+     */
+    override suspend fun predict(
+        imageBytes: ByteArray,
+        filename: String,
+        zonePrediction: Boolean,
+    ): SegmentationPrediction {
+        val effectiveTarget = if (zonePrediction) {
+            SegmentationPredictionTarget.ZONES
+        } else {
+            SegmentationPredictionTarget.POINTS
+        }
+        val targetPredictor = if (target == null || target == effectiveTarget) {
+            this
+        } else {
+            PythonSegmentationPredictor(
+                baseUrl = normalizedBaseUrl,
+                target = effectiveTarget,
+                httpClient = httpClient,
+            )
+        }
+        return targetPredictor.predict(
+            imageBytes = imageBytes,
+            filename = filename,
+        )
     }
 
     /**

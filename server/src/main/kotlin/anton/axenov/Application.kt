@@ -22,7 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
-private var activePredictor: SegmentationPredictionProvider = SegmentationPredictor()
+private var activePredictor: SegmentationPredictionProvider = createServerPredictionProvider()
 private var segmentationSessions = SegmentationSessionRegistry(
     predictor = activePredictor,
     onSnapshotAccepted = SnapshotDebugStore()::savePredictPointsSnapshot,
@@ -50,7 +50,7 @@ fun main() {
  * Configures HTTP routes for the AR snapshot server.
  */
 fun Application.module(
-    predictor: SegmentationPredictor = SegmentationPredictor(),
+    predictor: SegmentationPredictionProvider = createServerPredictionProvider(),
 ) {
     runBlocking {
         segmentationSessions.close()
