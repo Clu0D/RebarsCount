@@ -18,7 +18,7 @@ data class ZoneSegmentation(
     val prediction: SegmentationPrediction,
 ) {
     val points: List<ZoneTriangulationPoint> by lazy {
-        prediction.instances.map { instance ->
+        filterWeakSegmentationInstances(prediction.instances).map { instance ->
             ZoneTriangulationPoint(
                 segmentation = this,
                 imagePoint = instance.bbox.centerPoint,
@@ -26,6 +26,35 @@ data class ZoneSegmentation(
             )
         }
     }
+}
+
+/**
+ * Removes the weakest low-confidence observations before pairwise hypothesis generation.
+ *
+ * Only observations below confidence `0.15` are eligible for removal. At most the lowest ten
+ * percent of all frame observations are removed, rounded down so filtering never exceeds ten
+ * percent. Therefore the smaller restriction always wins.
+ *
+ * @param instances observations produced by one segmentation frame.
+ * @return observations retained for ray matching and pairwise triangulation.
+ */
+internal fun filterWeakSegmentationInstances(
+    instances: List<SegmentationInstance>,
+): List<SegmentationInstance> {
+    val maximumRemovalCount = instances.size / WEAK_OBSERVATION_FILTER_RATIO_DENOMINATOR
+    if (maximumRemovalCount == 0) {
+        return instances
+    }
+    val instancesToRemove = instances
+        .withIndex()
+        .filter { (_, instance) -> instance.confidence < WEAK_OBSERVATION_CONFIDENCE_THRESHOLD }
+        .sortedWith(
+            compareBy<IndexedValue<SegmentationInstance>> { (_, instance) -> instance.confidence }
+                .thenBy { (index, _) -> index },
+        )
+        .take(maximumRemovalCount)
+        .mapTo(mutableSetOf()) { (index, _) -> index }
+    return instances.filterIndexed { index, _ -> index !in instancesToRemove }
 }
 
 /**
@@ -513,3 +542,5 @@ private const val LATER_COMPARE_PROBABILITY = 0.25f
 private const val FRAME_CONSISTENCY_WARM_UP_COUNT = 3
 private const val UNSUPPORTED_RATIO_NUMERATOR = 3L
 private const val UNSUPPORTED_RATIO_DENOMINATOR = 10L
+private const val WEAK_OBSERVATION_CONFIDENCE_THRESHOLD = 0.15f
+private const val WEAK_OBSERVATION_FILTER_RATIO_DENOMINATOR = 10
