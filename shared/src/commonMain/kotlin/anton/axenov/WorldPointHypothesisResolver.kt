@@ -96,11 +96,13 @@ class WorldPointHypothesisResolver(
      *
      * @param newWorldPoints raw triangulated points.
      * @param acceptedFrameCount number of accepted frames including the current frame.
+     * @param candidateComponentsByObservation components selected by ray proximity before edge generation.
      * @return resolved dense components ordered by descending confidence.
      */
     fun resolve(
         newWorldPoints: List<WorldPoint>,
         acceptedFrameCount: Int = (currentGeneration + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        candidateComponentsByObservation: Map<ZoneTriangulationPoint, List<HypothesisComponent>> = emptyMap(),
     ): List<WorldPoint> {
         require(acceptedFrameCount >= 0) {
             "acceptedFrameCount must not be negative"
@@ -122,9 +124,15 @@ class WorldPointHypothesisResolver(
         }
         worldPointByObservations = buildWorldPointByObservations()
         val releasedComponentPoints = auditAndDissolveComponents(normalizedPoints)
+        val directlyMergedObservations = mergeObservationsIntoRayCandidateComponents(
+            candidateComponentsByObservation,
+        )
 
         (normalizedPoints + releasedComponentPoints)
             .distinct()
+            .filterNot { point ->
+                point.parentPoints.any { observation -> observation in directlyMergedObservations }
+            }
             .sortedByDescending { it.confidence }
             .forEach { newPoint ->
                 mergeNewPointIntoResolvedComponents(newPoint)?.let { component ->
@@ -146,6 +154,32 @@ class WorldPointHypothesisResolver(
             removeUsedObservations(component)
         }
         return resolvedComponents.map { it.toWorldPoint() }.sortedByDescending { component -> component.confidence }
+    }
+
+    /**
+     * Tries new observations against components preselected by viewing-ray proximity.
+     *
+     * @param candidateComponentsByObservation components ordered by distance to each observation ray.
+     * @return observations successfully included in a component.
+     */
+    private fun mergeObservationsIntoRayCandidateComponents(
+        candidateComponentsByObservation: Map<ZoneTriangulationPoint, List<HypothesisComponent>>,
+    ): Set<ZoneTriangulationPoint> {
+        val mergedObservations = mutableSetOf<ZoneTriangulationPoint>()
+        candidateComponentsByObservation.forEach { (observation, candidateComponents) ->
+            candidateComponents
+                .filter { component -> component in resolvedComponents }
+                .firstOrNull { component ->
+                    component.tryAddingOrReplacingCandidate(observation).also { merged ->
+                        if (merged) {
+                            component.recomputeCenterAndConfidence()
+                            removeUsedObservations(component)
+                        }
+                    }
+                }
+                ?.let { mergedObservations += observation }
+        }
+        return mergedObservations
     }
 
     /**

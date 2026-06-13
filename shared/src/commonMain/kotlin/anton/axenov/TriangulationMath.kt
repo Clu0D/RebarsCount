@@ -9,6 +9,31 @@ import korlibs.math.geom.Vector3F as Vector3
 class TriangulationMath {
 
     /**
+     * Calculates the shortest distance from a world point to one observation's forward viewing ray.
+     *
+     * Points behind the camera are measured to the ray origin rather than to the infinite line.
+     *
+     * @param frame frame snapshot defining the camera pose and intrinsics.
+     * @param imagePoint image observation defining the viewing-ray direction.
+     * @param worldPoint world-space point whose distance is measured.
+     * @return shortest distance to the forward ray in meters.
+     */
+    fun distanceToViewingRay(
+        frame: DetectionFrameSnapshotDto,
+        imagePoint: ImagePoint,
+        worldPoint: Vector3,
+    ): Float {
+        val ray = worldRay(frame, imagePoint)
+        val originToPoint = worldPoint - ray.origin
+        val forwardDistance = originToPoint.dot(ray.direction)
+        if (forwardDistance <= 0f) {
+            return originToPoint.length
+        }
+        val closestPoint = ray.origin + ray.direction * forwardDistance
+        return (worldPoint - closestPoint).length
+    }
+
+    /**
      * Finds epipolar-consistent correspondence candidates for every point from [firstImagePoints].
      *
      * @param firstSnapshot first frame snapshot with camera intrinsics and pose.

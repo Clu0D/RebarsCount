@@ -135,6 +135,12 @@ class ZoneTriangulationManager(
             frameSnapshot = frameSnapshot,
             prediction = prediction,
         )
+        val resolver = worldPointHypothesisResolversByZoneId.getOrPut(zone.id) { WorldPointHypothesisResolver() }
+        val candidateComponentsByObservation = findCandidateComponentsByObservationRay(
+            segmentation = newSegmentation,
+            components = resolver.resolvedComponents,
+            maximumDistanceMeters = dynamicThresholds.clusterRadiusMeters,
+        )
         val segmentationsToCompare = selectSegmentationsForComparison(
             newSnapshot = frameSnapshot,
             previousSegmentations = segmentationResults,
@@ -164,7 +170,11 @@ class ZoneTriangulationManager(
         }
 
         segmentationResults += newSegmentation
-        resolveWorldPoints(newSegmentation.zone, newPoints, acceptedFrameCount)
+        resolver.resolve(
+            newWorldPoints = newPoints,
+            acceptedFrameCount = acceptedFrameCount,
+            candidateComponentsByObservation = candidateComponentsByObservation,
+        )
         return true
     }
 
@@ -280,16 +290,44 @@ class ZoneTriangulationManager(
         }
     }
 
-    /**
-     * Rebuilds resolved multi-view point centers from all currently accumulated 2-view WorldPoints.
-     *
-     * @param zone zone owning the new hypotheses.
-     * @param newPoints pairwise hypotheses produced for the accepted frame.
-     * @param acceptedFrameCount number of accepted frames including the current frame.
-     */
-    private fun resolveWorldPoints(zone: Zone, newPoints: MutableList<WorldPoint>, acceptedFrameCount: Int) {
-        val resolver = worldPointHypothesisResolversByZoneId.getOrPut(zone.id) { WorldPointHypothesisResolver() }
-        resolver.resolve(newPoints, acceptedFrameCount)
+}
+
+/**
+ * Finds existing components close to each new observation's viewing ray.
+ *
+ * This search is intentionally performed before any pairwise [WorldPoint] is generated for the
+ * new frame. Components are returned in ascending ray-distance order so the resolver tries the
+ * geometrically most plausible component first.
+ *
+ * @param segmentation newly received segmentation whose observations are being processed.
+ * @param components existing resolved components eligible for direct observation inclusion.
+ * @param maximumDistanceMeters maximal distance from component center to observation ray.
+ * @return candidate components by new observation, each ordered by ascending ray distance.
+ */
+internal fun findCandidateComponentsByObservationRay(
+    segmentation: ZoneSegmentation,
+    components: List<WorldPointHypothesisResolver.HypothesisComponent>,
+    maximumDistanceMeters: Float,
+    triangulationMath: TriangulationMath = TriangulationMath(),
+): Map<ZoneTriangulationPoint, List<WorldPointHypothesisResolver.HypothesisComponent>> {
+    require(maximumDistanceMeters >= 0f) {
+        "maximumDistanceMeters must not be negative"
+    }
+    return segmentation.points.associateWith { observation ->
+        components
+            .asSequence()
+            .filterNot { component -> observation.segmentation in component.selectedByFrame }
+            .map { component ->
+                component to triangulationMath.distanceToViewingRay(
+                    frame = segmentation.frameSnapshot,
+                    imagePoint = observation.imagePoint,
+                    worldPoint = component.center,
+                )
+            }
+            .filter { (_, distance) -> distance <= maximumDistanceMeters }
+            .sortedBy { (_, distance) -> distance }
+            .map { (component, _) -> component }
+            .toList()
     }
 }
 
