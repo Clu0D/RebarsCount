@@ -143,6 +143,12 @@ fun Application.module(
             call.respond(segmentationSessions.processorFor(sessionId).rotateWorldPointZone(payload.pointId))
         }
 
+        post("/zones/delete") {
+            val sessionId = call.sessionIdOrRespond() ?: return@post
+            val payload = call.receive<ZoneIdDto>()
+            call.respond(segmentationSessions.processorFor(sessionId).deleteZone(payload.zoneId))
+        }
+
         post("/delete_request") {
             val sessionId = call.sessionIdOrRespond() ?: return@post
             val payload = call.receive<DeleteRequestDto>()

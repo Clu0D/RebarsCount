@@ -141,6 +141,36 @@ data class WorldPointMutationResponse(
 )
 
 /**
+ * Request that identifies one zone.
+ *
+ * @param zoneId stable zone identifier.
+ */
+@Serializable
+data class ZoneIdDto(
+    val zoneId: Long,
+)
+
+/**
+ * Result of cascading zone deletion.
+ *
+ * @param ok true when the zone existed and was deleted.
+ * @param zoneId checked zone identifier.
+ * @param removedSnapshots number of removed snapshot records.
+ * @param removedQueuedTasks number of removed queued processing tasks.
+ * @param removedWorldPoints number of removed automatic and manual world points.
+ * @param message user-visible deletion result.
+ */
+@Serializable
+data class DeleteZoneResponse(
+    val ok: Boolean,
+    val zoneId: Long,
+    val removedSnapshots: Int,
+    val removedQueuedTasks: Int,
+    val removedWorldPoints: Int,
+    val message: String,
+)
+
+/**
  * Bounding box from python response.
  */
 @Serializable

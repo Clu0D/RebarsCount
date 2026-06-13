@@ -86,6 +86,14 @@ interface SegmentationClient {
     suspend fun rotateWorldPointZone(pointId: Long): WorldPointMutationResponse
 
     /**
+     * Deletes one zone and all session state related to it.
+     *
+     * @param zoneId stable identifier of the zone to delete.
+     * @return cascading deletion result.
+     */
+    suspend fun deleteZone(zoneId: Long): DeleteZoneResponse
+
+    /**
      * Returns current zone status texts keyed by zone identifier.
      *
      * @return zone status text map.

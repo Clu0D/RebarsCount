@@ -3,6 +3,7 @@ package anton.axenov
 import android.os.SystemClock
 import android.view.Surface
 import com.google.ar.core.Frame
+import com.google.ar.core.Plane
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import korlibs.math.geom.Vector3F as Vector3
 
 /**
@@ -302,6 +304,30 @@ class ArDetectionPipeline(
     }
 
     /**
+     * Handles one completed tap on the AR view while a correction mode is active.
+     *
+     * @param xPx horizontal tap coordinate in view pixels.
+     * @param yPx vertical tap coordinate in view pixels.
+     * @param correctionMode currently selected correction mode.
+     */
+    fun onSceneTapped(
+        xPx: Float,
+        yPx: Float,
+        correctionMode: CorrectionMode,
+    ) {
+        if (!isSceneActive.get() || isFullResultVisible()) {
+            return
+        }
+        val activeSceneView = sceneView ?: return
+        when (correctionMode) {
+            CorrectionMode.DELETE_ZONE -> handleZoneDeletionTap(activeSceneView, xPx, yPx)
+            CorrectionMode.DELETE_POINT -> handleWorldPointDeletionTap(xPx, yPx)
+            CorrectionMode.ADD_POINT -> handleWorldPointAdditionTap(activeSceneView, xPx, yPx)
+            CorrectionMode.MOVE_POINT_TO_ANOTHER_ZONE -> handleWorldPointMoveTap(xPx, yPx)
+        }
+    }
+
+    /**
      * Builds the current session result displayed by the full-result screen.
      *
      * @return text containing the number of reconstructed points assigned to each zone.
@@ -377,6 +403,159 @@ class ArDetectionPipeline(
             return
         }
         reportStatus("Removed ${removedZones.size} queued zone(s).", true)
+    }
+
+    /**
+     * Deletes one tapped zone through processing API and removes it from the local scene.
+     *
+     * @param activeSceneView current AR scene.
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     */
+    private fun handleZoneDeletionTap(
+        activeSceneView: ARSceneView,
+        xPx: Float,
+        yPx: Float,
+    ) {
+        val selectedZone = pickZoneAtTap(activeSceneView, xPx, yPx) ?: run {
+            reportStatus("Не удалось выбрать зону для удаления", true)
+            return
+        }
+        val client = correctionClientForPoints()
+        if (client == null) {
+            zonesManager.removeZones(listOf(selectedZone))
+            publishZoneScreenLabels()
+            reportStatus("Зона ${selectedZone.id} удалена локально", true)
+            return
+        }
+        coroutineScope.launch {
+            val response = runCatching {
+                withContext(Dispatchers.IO) {
+                    client.deleteZone(selectedZone.id)
+                }
+            }.getOrElse { error ->
+                reportStatus(
+                    "Удаление зоны ${selectedZone.id} не удалось: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+                return@launch
+            }
+            if (!response.ok) {
+                reportStatus(response.message, true)
+                return@launch
+            }
+            zonesManager.removeZones(listOf(selectedZone))
+            publishZoneScreenLabels()
+            reportStatus(response.message, true)
+            requestServerUpdates(client)
+        }
+    }
+
+    /**
+     * Deletes one tapped reconstructed world point through processing API and reloads points.
+     *
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     */
+    private fun handleWorldPointDeletionTap(xPx: Float, yPx: Float) {
+        val selectedPoint = pickWorldPointAtTap(xPx, yPx) ?: run {
+            reportStatus("Не удалось выбрать торец для удаления", true)
+            return
+        }
+        val client = correctionClientForPoints() ?: run {
+            reportStatus("Постобработка торцов недоступна до получения результатов API", true)
+            return
+        }
+        coroutineScope.launch {
+            val response = runCatching {
+                withContext(Dispatchers.IO) {
+                    client.deleteWorldPoint(selectedPoint.pointId)
+                }
+            }.getOrElse { error ->
+                reportStatus(
+                    "Удаление торца ${selectedPoint.pointId} не удалось: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+                return@launch
+            }
+            reportStatus(response.message, true)
+            if (response.ok) {
+                requestServerUpdates(client)
+            }
+        }
+    }
+
+    /**
+     * Adds one new world point at the tapped AR position through processing API and reloads points.
+     *
+     * @param activeSceneView current AR scene.
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     */
+    private fun handleWorldPointAdditionTap(
+        activeSceneView: ARSceneView,
+        xPx: Float,
+        yPx: Float,
+    ) {
+        val client = correctionClientForPoints() ?: run {
+            reportStatus("Постобработка торцов недоступна до получения результатов API", true)
+            return
+        }
+        val worldPoint = placeManualWorldPoint(activeSceneView, xPx, yPx) ?: run {
+            reportStatus("Не удалось привязать новый торец к AR-сцене", true)
+            return
+        }
+        coroutineScope.launch {
+            val response = runCatching {
+                withContext(Dispatchers.IO) {
+                    client.addWorldPoint(AddWorldPointDto(position = worldPoint))
+                }
+            }.getOrElse { error ->
+                reportStatus(
+                    "Добавление торца не удалось: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+                return@launch
+            }
+            reportStatus(response.message, true)
+            if (response.ok) {
+                requestServerUpdates(client)
+            }
+        }
+    }
+
+    /**
+     * Rotates one tapped reconstructed point to the next nearby zone and reloads points.
+     *
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     */
+    private fun handleWorldPointMoveTap(xPx: Float, yPx: Float) {
+        val selectedPoint = pickWorldPointAtTap(xPx, yPx) ?: run {
+            reportStatus("Не удалось выбрать торец для переноса", true)
+            return
+        }
+        val client = correctionClientForPoints() ?: run {
+            reportStatus("Постобработка торцов недоступна до получения результатов API", true)
+            return
+        }
+        coroutineScope.launch {
+            val response = runCatching {
+                withContext(Dispatchers.IO) {
+                    client.rotateWorldPointZone(selectedPoint.pointId)
+                }
+            }.getOrElse { error ->
+                reportStatus(
+                    "Перенос торца ${selectedPoint.pointId} не удался: ${error.message ?: error.javaClass.simpleName}",
+                    true,
+                )
+                return@launch
+            }
+            reportStatus(response.message, true)
+            if (response.ok) {
+                requestServerUpdates(client)
+            }
+        }
     }
 
     /**
@@ -811,14 +990,23 @@ class ArDetectionPipeline(
      * Requests latest updates from server.
      */
     private fun requestServerUpdates() {
+        val client = if (deferredResultsActive) {
+            deferredServerClient ?: segmentationServerClient
+        } else {
+            segmentationServerClient
+        }
+        requestServerUpdates(client)
+    }
+
+    /**
+     * Requests latest updates from one specific processing client.
+     *
+     * @param client source client whose state should be reloaded.
+     */
+    private fun requestServerUpdates(client: SegmentationClient) {
         serverStatusJob = coroutineScope.launch {
             val serverUpdate = runCatching {
                 withContext(Dispatchers.IO) {
-                    val client = if (deferredResultsActive) {
-                        deferredServerClient ?: segmentationServerClient
-                    } else {
-                        segmentationServerClient
-                    }
                     fetchServerUpdate(client)
                 }
             }.getOrElse { error ->
@@ -969,6 +1157,143 @@ class ArDetectionPipeline(
         runCatching { node.anchor.detach() }
         runCatching { node.destroy() }
     }
+
+    /**
+     * Returns the client that currently owns post-processed world points.
+     *
+     * Deferred mode has no point-editing backend until remote processing starts.
+     *
+     * @return active correction client or null when point post-processing is unavailable.
+     */
+    private fun correctionClientForPoints(): SegmentationClient? {
+        return when {
+            deferredResultsActive -> deferredServerClient
+            processingMode == ProcessingMode.DEFERRED -> null
+            else -> segmentationServerClient
+        }
+    }
+
+    /**
+     * Picks one zone at the tapped screen position.
+     *
+     * A polygon hit is preferred; otherwise the nearest visible zone center within a tolerance is used.
+     *
+     * @param activeSceneView current AR scene.
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     * @return selected zone or null when nothing matches the tap.
+     */
+    private fun pickZoneAtTap(
+        activeSceneView: ARSceneView,
+        xPx: Float,
+        yPx: Float,
+    ): Zone? {
+        val tapPoint = ImagePoint(xPx.toInt(), yPx.toInt())
+        val projector = worldPointProjector(activeSceneView)
+        val polygonMatches = zonesManager.getZones()
+            .mapNotNull { zone ->
+                val projectedPolygon = projectZonePolygonToScreen(zone, projector) ?: return@mapNotNull null
+                if (!isImagePointInsidePolygon(tapPoint, projectedPolygon)) {
+                    return@mapNotNull null
+                }
+                zone to calculateScreenPolygonArea(projectedPolygon)
+            }
+            .sortedBy { (_, area) -> area }
+        if (polygonMatches.isNotEmpty()) {
+            return polygonMatches.first().first
+        }
+
+        return zonesManager.getZones()
+            .mapNotNull { zone ->
+                val center = projector(zone.center) ?: return@mapNotNull null
+                val distanceSquared = squaredScreenDistance(xPx, yPx, center.xPx, center.yPx)
+                if (distanceSquared > ZONE_PICK_RADIUS_PX * ZONE_PICK_RADIUS_PX) {
+                    return@mapNotNull null
+                }
+                zone to distanceSquared
+            }
+            .minByOrNull { (_, distanceSquared) -> distanceSquared }
+            ?.first
+    }
+
+    /**
+     * Picks one rendered world point near the tap.
+     *
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     * @return selected point or null when no point is close enough.
+     */
+    private fun pickWorldPointAtTap(
+        xPx: Float,
+        yPx: Float,
+    ): ServerWorldPointDto? {
+        val activeSceneView = sceneView ?: return null
+        val projector = worldPointProjector(activeSceneView)
+        return lastServerWorldPoints
+            .mapNotNull { worldPoint ->
+                val projected = projector(worldPoint.position) ?: return@mapNotNull null
+                val distanceSquared = squaredScreenDistance(xPx, yPx, projected.xPx, projected.yPx)
+                if (distanceSquared > WORLD_POINT_PICK_RADIUS_PX * WORLD_POINT_PICK_RADIUS_PX) {
+                    return@mapNotNull null
+                }
+                worldPoint to distanceSquared
+            }
+            .minByOrNull { (_, distanceSquared) -> distanceSquared }
+            ?.first
+    }
+
+    /**
+     * Builds a projector from world coordinates to current screen coordinates.
+     *
+     * @param activeSceneView current AR scene.
+     * @return projector returning null when the point is not projectable.
+     */
+    private fun worldPointProjector(
+        activeSceneView: ARSceneView,
+    ): (Vector3) -> ViewPoint? = { worldPoint ->
+        val projected = activeSceneView.view.worldToScreen(
+            Position(worldPoint.x, worldPoint.y, worldPoint.z),
+        )
+        if (!projected.x.isFinite() || !projected.y.isFinite()) {
+            null
+        } else {
+            ViewPoint(projected.x, projected.y)
+        }
+    }
+
+    /**
+     * Places one manual point at the tapped AR location using plane and feature-point hit tests.
+     *
+     * @param activeSceneView current AR scene.
+     * @param xPx tap X in pixels.
+     * @param yPx tap Y in pixels.
+     * @return world-space point or null when no AR hit is available.
+     */
+    private fun placeManualWorldPoint(
+        activeSceneView: ARSceneView,
+        xPx: Float,
+        yPx: Float,
+    ): Vector3? {
+        val planeHit = activeSceneView.hitTestAR(
+            xPx = xPx,
+            yPx = yPx,
+            planeTypes = setOf(
+                Plane.Type.HORIZONTAL_UPWARD_FACING,
+                Plane.Type.HORIZONTAL_DOWNWARD_FACING,
+                Plane.Type.VERTICAL,
+            ),
+        )?.hitPose
+        if (planeHit != null) {
+            return Vector3(planeHit.tx(), planeHit.ty(), planeHit.tz())
+        }
+        val featureHit = activeSceneView.hitTestAR(
+            xPx = xPx,
+            yPx = yPx,
+            point = true,
+            depthPoint = false,
+        )?.hitPose ?: return null
+        return Vector3(featureHit.tx(), featureHit.ty(), featureHit.tz())
+    }
 }
 
 /**
@@ -1036,3 +1361,44 @@ private const val FRAME_FILTER_REPORT_INTERVAL_MS = 1000L
 private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 500L
 private const val SERVER_REFRESH_INTERVAL_MS = 1000L
 private const val MAX_ZONE_OCCLUSION_RATIO = 0.2f
+private const val WORLD_POINT_PICK_RADIUS_PX = 72f
+private const val ZONE_PICK_RADIUS_PX = 96f
+
+/**
+ * Computes polygon area in screen pixels using the shoelace formula.
+ *
+ * @param polygon polygon in screen pixels.
+ * @return absolute polygon area.
+ */
+private fun calculateScreenPolygonArea(polygon: List<ImagePoint>): Float {
+    if (polygon.size < 3) {
+        return 0f
+    }
+    var doubledArea = 0L
+    polygon.indices.forEach { index ->
+        val current = polygon[index]
+        val next = polygon[(index + 1) % polygon.size]
+        doubledArea += current.x.toLong() * next.y - next.x.toLong() * current.y
+    }
+    return abs(doubledArea).toFloat() * 0.5f
+}
+
+/**
+ * Computes squared distance between 2 screen points.
+ *
+ * @param firstX first X.
+ * @param firstY first Y.
+ * @param secondX second X.
+ * @param secondY second Y.
+ * @return squared distance in pixels.
+ */
+private fun squaredScreenDistance(
+    firstX: Float,
+    firstY: Float,
+    secondX: Float,
+    secondY: Float,
+): Float {
+    val dx = firstX - secondX
+    val dy = firstY - secondY
+    return dx * dx + dy * dy
+}

@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.MotionEvent
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -319,6 +320,20 @@ actual fun ArSceneHost(
             },
             onViewCreated = {
                 detectionPipeline.onSceneCreated(this)
+                setOnTouchListener { _, event ->
+                    val correctionMode = latestInterfaceControlState.value.correctionMode
+                    if (correctionMode == null) {
+                        return@setOnTouchListener false
+                    }
+                    if (event.actionMasked == MotionEvent.ACTION_UP) {
+                        detectionPipeline.onSceneTapped(
+                            xPx = event.x,
+                            yPx = event.y,
+                            correctionMode = correctionMode,
+                        )
+                    }
+                    true
+                }
                 statusReporter.report("AR view created (SceneView)")
             },
             onSessionCreated = {

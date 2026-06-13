@@ -3,6 +3,7 @@ package anton.axenov.localServer
 import anton.axenov.AddWorldPointDto
 import anton.axenov.DetectionFrameSnapshotDto
 import anton.axenov.DeleteRequestResponse
+import anton.axenov.DeleteZoneResponse
 import anton.axenov.SegmentationClient
 import anton.axenov.SegmentationPrediction
 import anton.axenov.SegmentationPredictionProvider
@@ -126,6 +127,16 @@ class LocalClient(
      */
     override suspend fun rotateWorldPointZone(pointId: Long): WorldPointMutationResponse {
         return processor.rotateWorldPointZone(pointId)
+    }
+
+    /**
+     * Deletes one local zone and all related processing state.
+     *
+     * @param zoneId stable zone identifier.
+     * @return cascading deletion result.
+     */
+    override suspend fun deleteZone(zoneId: Long): DeleteZoneResponse {
+        return processor.deleteZone(zoneId)
     }
 
     /**

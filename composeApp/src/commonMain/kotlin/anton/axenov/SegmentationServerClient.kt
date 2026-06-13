@@ -132,6 +132,74 @@ class SegmentationServerClient(
     }
 
     /**
+     * Adds one manually specified world point.
+     *
+     * @param request point position, confidence and optional zone.
+     * @return server mutation result.
+     */
+    override suspend fun addWorldPoint(request: AddWorldPointDto): WorldPointMutationResponse {
+        return httpClient
+            .post("$normalizedBaseUrl/world-points/add") {
+                applyRequestMetadata()
+                accept(ContentType.Application.Json)
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            .bodyOrThrow("Adding a world point")
+    }
+
+    /**
+     * Deletes one world point.
+     *
+     * @param pointId stable point identifier.
+     * @return server mutation result.
+     */
+    override suspend fun deleteWorldPoint(pointId: Long): WorldPointMutationResponse {
+        return httpClient
+            .post("$normalizedBaseUrl/world-points/delete") {
+                applyRequestMetadata()
+                accept(ContentType.Application.Json)
+                contentType(ContentType.Application.Json)
+                setBody(WorldPointIdDto(pointId))
+            }
+            .bodyOrThrow("Deleting world point $pointId")
+    }
+
+    /**
+     * Rotates one point assignment between its four nearest zones.
+     *
+     * @param pointId stable point identifier.
+     * @return server mutation result.
+     */
+    override suspend fun rotateWorldPointZone(pointId: Long): WorldPointMutationResponse {
+        return httpClient
+            .post("$normalizedBaseUrl/world-points/rotate-zone") {
+                applyRequestMetadata()
+                accept(ContentType.Application.Json)
+                contentType(ContentType.Application.Json)
+                setBody(WorldPointIdDto(pointId))
+            }
+            .bodyOrThrow("Rotating zone for world point $pointId")
+    }
+
+    /**
+     * Deletes one zone and all related server-side state.
+     *
+     * @param zoneId stable zone identifier.
+     * @return cascading deletion result.
+     */
+    override suspend fun deleteZone(zoneId: Long): DeleteZoneResponse {
+        return httpClient
+            .post("$normalizedBaseUrl/zones/delete") {
+                applyRequestMetadata()
+                accept(ContentType.Application.Json)
+                contentType(ContentType.Application.Json)
+                setBody(ZoneIdDto(zoneId))
+            }
+            .bodyOrThrow("Deleting zone $zoneId")
+    }
+
+    /**
      * Fetches current zone texts keyed by zone id.
      *
      * @return map of zone id to server text.

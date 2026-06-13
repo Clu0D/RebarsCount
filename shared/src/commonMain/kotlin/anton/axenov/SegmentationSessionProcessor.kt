@@ -297,6 +297,63 @@ class SegmentationSessionProcessor(
         }
     }
 
+    override suspend fun deleteZone(zoneId: Long): DeleteZoneResponse {
+        return stateMutex.withLock {
+            refreshAssignedWorldPointsIfNeeded()
+            val removedSnapshots = snapshotsByZoneId.remove(zoneId)
+                ?: return@withLock DeleteZoneResponse(
+                    ok = false,
+                    zoneId = zoneId,
+                    removedSnapshots = 0,
+                    removedQueuedTasks = 0,
+                    removedWorldPoints = 0,
+                    message = "Zone $zoneId was not found in session $sessionId",
+                )
+            val automaticWorldPoints = triangulationManagersByZoneId.remove(zoneId)
+                ?.getResolvedWorldPoints()
+                .orEmpty()
+                .toSet()
+            val removedQueuedTasks = queuedTasks.count { task -> task.zoneId == zoneId }
+            queuedTasks.removeAll { task -> task.zoneId == zoneId }
+
+            val relatedPointIds = assignedWorldPointsCache
+                .filter { point ->
+                    point.zoneId == zoneId || point.worldPoint in automaticWorldPoints
+                }
+                .mapTo(mutableSetOf()) { point -> point.pointId }
+            pointIdByAutomaticWorldPoint.forEach { (worldPoint, pointId) ->
+                if (worldPoint in automaticWorldPoints) {
+                    relatedPointIds += pointId
+                }
+            }
+            manuallyAddedWorldPointsById.values
+                .filter { point -> point.zoneId == zoneId }
+                .forEach { point -> relatedPointIds += point.pointId }
+
+            pointIdByAutomaticWorldPoint.keys.removeAll(automaticWorldPoints)
+            manuallyAddedWorldPointsById.keys.removeAll(relatedPointIds)
+            deletedAutomaticWorldPointIds += relatedPointIds
+            overriddenZoneIdByPointId.entries.removeAll { entry ->
+                entry.key in relatedPointIds || entry.value == zoneId
+            }
+            assignedWorldPointsCache = assignedWorldPointsCache.filterNot { point ->
+                point.pointId in relatedPointIds
+            }
+            hasPendingZoneSeparation = true
+            hasZoneSeparationRun = false
+            refreshAssignedWorldPointsIfNeeded()
+
+            DeleteZoneResponse(
+                ok = true,
+                zoneId = zoneId,
+                removedSnapshots = removedSnapshots.size,
+                removedQueuedTasks = removedQueuedTasks,
+                removedWorldPoints = relatedPointIds.size,
+                message = "Deleted zone $zoneId and all related session state",
+            )
+        }
+    }
+
     override fun close() {
         workerJobs.forEach { worker -> worker.cancel() }
         workerJobs.clear()
