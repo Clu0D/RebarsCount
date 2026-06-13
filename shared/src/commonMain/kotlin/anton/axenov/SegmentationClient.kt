@@ -62,6 +62,30 @@ interface SegmentationClient {
     suspend fun fetchWorldPoints(): List<ServerWorldPointDto>
 
     /**
+     * Adds one manually specified world point to post-processed results.
+     *
+     * @param request point position, confidence and optional explicit zone.
+     * @return mutation result containing the created point.
+     */
+    suspend fun addWorldPoint(request: AddWorldPointDto): WorldPointMutationResponse
+
+    /**
+     * Deletes one world point from post-processed results.
+     *
+     * @param pointId stable identifier of the point to delete.
+     * @return deletion result.
+     */
+    suspend fun deleteWorldPoint(pointId: Long): WorldPointMutationResponse
+
+    /**
+     * Moves one world point to the next zone among its four nearest zone centers.
+     *
+     * @param pointId stable identifier of the point whose zone should rotate.
+     * @return mutation result containing the updated point.
+     */
+    suspend fun rotateWorldPointZone(pointId: Long): WorldPointMutationResponse
+
+    /**
      * Returns current zone status texts keyed by zone identifier.
      *
      * @return zone status text map.

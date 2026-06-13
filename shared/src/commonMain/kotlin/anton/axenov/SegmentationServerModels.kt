@@ -85,16 +85,59 @@ data class DeleteRequestResponse(
 /**
  * World-space point reconstructed on the server.
  *
+ * @param pointId stable point identifier used by post-processing operations.
  * @param zoneId zone that owns this reconstructed point.
  * @param position point position in world coordinates.
  * @param confidence point confidence in range `[0, 1]`.
  */
 @Serializable
 data class ServerWorldPointDto(
+    val pointId: Long,
     val zoneId: Long,
     @Serializable(with = Vector3Serializer::class)
     val position: Vector3F,
     val confidence: Float
+)
+
+/**
+ * Request used to add one world-space point during post-processing.
+ *
+ * When [zoneId] is absent, the server assigns the point to the nearest known zone.
+ *
+ * @param position point position in world coordinates.
+ * @param zoneId optional explicit zone identifier.
+ * @param confidence point confidence in range `[0, 1]`.
+ */
+@Serializable
+data class AddWorldPointDto(
+    @Serializable(with = Vector3Serializer::class)
+    val position: Vector3F,
+    val zoneId: Long? = null,
+    val confidence: Float = 1f,
+)
+
+/**
+ * Request that identifies one world-space point.
+ *
+ * @param pointId stable point identifier.
+ */
+@Serializable
+data class WorldPointIdDto(
+    val pointId: Long,
+)
+
+/**
+ * Result of one world-point post-processing operation.
+ *
+ * @param ok true when the requested mutation was applied.
+ * @param point resulting point state, or null when the point was deleted or not found.
+ * @param message user-visible mutation result.
+ */
+@Serializable
+data class WorldPointMutationResponse(
+    val ok: Boolean,
+    val point: ServerWorldPointDto? = null,
+    val message: String,
 )
 
 /**

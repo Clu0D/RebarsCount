@@ -48,7 +48,12 @@ class SegmentationSessionProcessor(
     private var queueSignals = Channel<Unit>(Channel.UNLIMITED)
     private var scope = newProcessorScope()
     private val workerJobs = mutableListOf<Job>()
-    private var assignedWorldPointsCache = emptyList<AssignedWorldPoint>()
+    private var assignedWorldPointsCache = emptyList<IdentifiedAssignedWorldPoint>()
+    private val pointIdByAutomaticWorldPoint = mutableMapOf<WorldPoint, Long>()
+    private val manuallyAddedWorldPointsById = mutableMapOf<Long, IdentifiedAssignedWorldPoint>()
+    private val deletedAutomaticWorldPointIds = mutableSetOf<Long>()
+    private val overriddenZoneIdByPointId = mutableMapOf<Long, Long>()
+    private var nextWorldPointId = 1L
     private var hasPendingZoneSeparation = false
     private var hasZoneSeparationRun = false
     private var lastZoneSeparationAt = timeSource.markNow()
@@ -167,13 +172,128 @@ class SegmentationSessionProcessor(
     override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return stateMutex.withLock {
             refreshAssignedWorldPointsIfNeeded()
-            assignedWorldPointsCache.map { assignedWorldPoint ->
-                ServerWorldPointDto(
-                    zoneId = assignedWorldPoint.zoneId,
-                    position = assignedWorldPoint.worldPoint.position,
-                    confidence = assignedWorldPoint.worldPoint.confidence,
+            assignedWorldPointsCache.map { assignedWorldPoint -> assignedWorldPoint.toDto() }
+        }
+    }
+
+    override suspend fun addWorldPoint(request: AddWorldPointDto): WorldPointMutationResponse {
+        return stateMutex.withLock {
+            refreshAssignedWorldPointsIfNeeded()
+            if (!request.position.isFinite()) {
+                return@withLock WorldPointMutationResponse(
+                    ok = false,
+                    message = "World point position must contain only finite coordinates",
                 )
             }
+            if (!request.confidence.isFinite() || request.confidence !in 0f..1f) {
+                return@withLock WorldPointMutationResponse(
+                    ok = false,
+                    message = "World point confidence must be in range [0, 1]",
+                )
+            }
+            val zones = knownZones()
+            if (zones.isEmpty()) {
+                return@withLock WorldPointMutationResponse(
+                    ok = false,
+                    message = "Cannot add a world point before at least one zone is known",
+                )
+            }
+            val assignedZoneId = request.zoneId?.let { requestedZoneId ->
+                if (zones.none { zone -> zone.id == requestedZoneId }) {
+                    return@withLock WorldPointMutationResponse(
+                        ok = false,
+                        message = "Zone $requestedZoneId is not known in session $sessionId",
+                    )
+                }
+                requestedZoneId
+            } ?: nearestZoneId(request.position, zones)
+            val identifiedPoint = IdentifiedAssignedWorldPoint(
+                pointId = nextWorldPointId++,
+                assignedWorldPoint = AssignedWorldPoint(
+                    zoneId = assignedZoneId,
+                    worldPoint = WorldPoint(
+                        position = request.position,
+                        parentPoints = emptySet(),
+                        confidence = request.confidence,
+                    ),
+                    isAnchor = false,
+                ),
+            )
+            manuallyAddedWorldPointsById[identifiedPoint.pointId] = identifiedPoint
+            assignedWorldPointsCache = assignedWorldPointsCache + identifiedPoint
+            WorldPointMutationResponse(
+                ok = true,
+                point = identifiedPoint.toDto(),
+                message = "Added world point ${identifiedPoint.pointId} to zone $assignedZoneId",
+            )
+        }
+    }
+
+    override suspend fun deleteWorldPoint(pointId: Long): WorldPointMutationResponse {
+        return stateMutex.withLock {
+            refreshAssignedWorldPointsIfNeeded()
+            val point = assignedWorldPointsCache.firstOrNull { candidate -> candidate.pointId == pointId }
+                ?: return@withLock WorldPointMutationResponse(
+                    ok = false,
+                    message = "World point $pointId was not found in session $sessionId",
+                )
+            if (manuallyAddedWorldPointsById.remove(pointId) == null) {
+                deletedAutomaticWorldPointIds += pointId
+            }
+            overriddenZoneIdByPointId.remove(pointId)
+            assignedWorldPointsCache = assignedWorldPointsCache.filterNot { candidate ->
+                candidate.pointId == point.pointId
+            }
+            WorldPointMutationResponse(
+                ok = true,
+                message = "Deleted world point $pointId",
+            )
+        }
+    }
+
+    override suspend fun rotateWorldPointZone(pointId: Long): WorldPointMutationResponse {
+        return stateMutex.withLock {
+            refreshAssignedWorldPointsIfNeeded()
+            val pointIndex = assignedWorldPointsCache.indexOfFirst { candidate -> candidate.pointId == pointId }
+            if (pointIndex < 0) {
+                return@withLock WorldPointMutationResponse(
+                    ok = false,
+                    message = "World point $pointId was not found in session $sessionId",
+                )
+            }
+            val point = assignedWorldPointsCache[pointIndex]
+            val nearestZones = knownZones()
+                .sortedWith(
+                    compareBy<Zone> { zone -> squaredDistance(point.worldPoint.position, zone.center) }
+                        .thenBy { zone -> zone.id },
+                )
+                .take(MAX_ROTATING_ZONE_COUNT)
+            if (nearestZones.isEmpty()) {
+                return@withLock WorldPointMutationResponse(
+                    ok = false,
+                    point = point.toDto(),
+                    message = "Cannot rotate world point $pointId because no zones are known",
+                )
+            }
+            val currentZoneIndex = nearestZones.indexOfFirst { zone -> zone.id == point.zoneId }
+            val nextZone = if (currentZoneIndex < 0) {
+                nearestZones.first()
+            } else {
+                nearestZones[(currentZoneIndex + 1) % nearestZones.size]
+            }
+            val updatedPoint = point.withZoneId(nextZone.id)
+            overriddenZoneIdByPointId[pointId] = nextZone.id
+            if (manuallyAddedWorldPointsById.containsKey(pointId)) {
+                manuallyAddedWorldPointsById[pointId] = updatedPoint
+            }
+            assignedWorldPointsCache = assignedWorldPointsCache.toMutableList().also { points ->
+                points[pointIndex] = updatedPoint
+            }
+            WorldPointMutationResponse(
+                ok = true,
+                point = updatedPoint.toDto(),
+                message = "Moved world point $pointId to zone ${nextZone.id}",
+            )
         }
     }
 
@@ -195,6 +315,11 @@ class SegmentationSessionProcessor(
             snapshotsByZoneId.clear()
             triangulationManagersByZoneId.clear()
             assignedWorldPointsCache = emptyList()
+            pointIdByAutomaticWorldPoint.clear()
+            manuallyAddedWorldPointsById.clear()
+            deletedAutomaticWorldPointIds.clear()
+            overriddenZoneIdByPointId.clear()
+            nextWorldPointId = 1L
             hasPendingZoneSeparation = false
             hasZoneSeparationRun = false
             lastZoneSeparationAt = timeSource.markNow()
@@ -297,17 +422,125 @@ class SegmentationSessionProcessor(
             return
         }
 
-        val zones = snapshotsByZoneId.values
-            .mapNotNull { snapshots -> snapshots.firstOrNull()?.snapshot?.zone }
-            .distinctBy { zone -> zone.id }
-            .sortedBy { zone -> zone.id }
+        val zones = knownZones()
         val worldPoints = triangulationManagersByZoneId.values
             .flatMap { manager -> manager.getResolvedWorldPoints() }
-        assignedWorldPointsCache = assignWorldPointsToZones(worldPoints, zones)
+        val automaticPoints = assignWorldPointsToZones(worldPoints, zones)
+            .map { assignedPoint ->
+                val pointId = pointIdByAutomaticWorldPoint.getOrPut(assignedPoint.worldPoint) {
+                    nextWorldPointId++
+                }
+                IdentifiedAssignedWorldPoint(
+                    pointId = pointId,
+                    assignedWorldPoint = overriddenZoneIdByPointId[pointId]
+                        ?.let { zoneId -> assignedPoint.withZoneId(zoneId) }
+                        ?: assignedPoint,
+                )
+            }
+            .filterNot { identifiedPoint -> identifiedPoint.pointId in deletedAutomaticWorldPointIds }
+        assignedWorldPointsCache = automaticPoints + manuallyAddedWorldPointsById.values
         hasPendingZoneSeparation = false
         hasZoneSeparationRun = true
         lastZoneSeparationAt = timeSource.markNow()
     }
+
+    /**
+     * Returns all known zones in deterministic identifier order.
+     *
+     * @return zones registered by uploaded snapshots.
+     */
+    private fun knownZones(): List<Zone> {
+        return snapshotsByZoneId.values
+            .mapNotNull { snapshots -> snapshots.firstOrNull()?.snapshot?.zone }
+            .distinctBy { zone -> zone.id }
+            .sortedBy { zone -> zone.id }
+    }
+}
+
+/**
+ * One assigned world point paired with its stable post-processing identifier.
+ *
+ * @param pointId stable identifier exposed to clients.
+ * @param assignedWorldPoint current point assignment.
+ */
+private data class IdentifiedAssignedWorldPoint(
+    val pointId: Long,
+    val assignedWorldPoint: AssignedWorldPoint,
+) {
+    val zoneId: Long
+        get() = assignedWorldPoint.zoneId
+
+    val worldPoint: WorldPoint
+        get() = assignedWorldPoint.worldPoint
+
+    /**
+     * Returns this identified point assigned to another zone.
+     *
+     * @param zoneId new zone identifier.
+     * @return copied identified point.
+     */
+    fun withZoneId(zoneId: Long): IdentifiedAssignedWorldPoint {
+        return copy(assignedWorldPoint = assignedWorldPoint.withZoneId(zoneId))
+    }
+
+    /**
+     * Converts this point to the public API representation.
+     *
+     * @return serializable world-point DTO.
+     */
+    fun toDto(): ServerWorldPointDto {
+        return ServerWorldPointDto(
+            pointId = pointId,
+            zoneId = zoneId,
+            position = worldPoint.position,
+            confidence = worldPoint.confidence,
+        )
+    }
+}
+
+/**
+ * Returns this assignment with a changed zone identifier.
+ *
+ * @param zoneId new zone identifier.
+ * @return copied assignment.
+ */
+private fun AssignedWorldPoint.withZoneId(zoneId: Long): AssignedWorldPoint {
+    return copy(zoneId = zoneId, isAnchor = false)
+}
+
+/**
+ * Checks that all vector coordinates are finite.
+ *
+ * @return true when every coordinate is finite.
+ */
+private fun Vector3F.isFinite(): Boolean {
+    return x.isFinite() && y.isFinite() && z.isFinite()
+}
+
+/**
+ * Returns the nearest zone identifier for one world-space position.
+ *
+ * @param point world-space position.
+ * @param zones candidate zones.
+ * @return identifier of the nearest zone.
+ */
+private fun nearestZoneId(point: Vector3F, zones: List<Zone>): Long {
+    return zones.minWith(
+        compareBy<Zone> { zone -> squaredDistance(point, zone.center) }
+            .thenBy { zone -> zone.id },
+    ).id
+}
+
+/**
+ * Computes squared Euclidean distance between two world positions.
+ *
+ * @param first first position.
+ * @param second second position.
+ * @return squared distance.
+ */
+private fun squaredDistance(first: Vector3F, second: Vector3F): Float {
+    val delta = first - second
+    return delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
 }
 
 private data class StoredSnapshotRecord(
@@ -343,4 +576,5 @@ private fun <T> MutableList<T>.removeFirstOrNullCompat(): T? {
 }
 
 private const val DEFAULT_SEGMENTATION_WORKER_COUNT = 3
+private const val MAX_ROTATING_ZONE_COUNT = 4
 private val ZONE_SEPARATION_INTERVAL = 10.seconds

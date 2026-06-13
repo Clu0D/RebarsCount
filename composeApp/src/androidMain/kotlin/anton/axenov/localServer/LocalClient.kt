@@ -1,5 +1,6 @@
 package anton.axenov.localServer
 
+import anton.axenov.AddWorldPointDto
 import anton.axenov.DetectionFrameSnapshotDto
 import anton.axenov.DeleteRequestResponse
 import anton.axenov.SegmentationClient
@@ -11,6 +12,7 @@ import anton.axenov.ServerWorldPointDto
 import anton.axenov.SnapshotUploadResponse
 import anton.axenov.ZoneSnapshotUploadDto
 import anton.axenov.ZoneStatus
+import anton.axenov.WorldPointMutationResponse
 import anton.axenov.generateRequestIdentifier
 
 /**
@@ -94,6 +96,36 @@ class LocalClient(
      */
     override suspend fun fetchWorldPoints(): List<ServerWorldPointDto> {
         return processor.fetchWorldPoints()
+    }
+
+    /**
+     * Adds one manually specified local world point.
+     *
+     * @param request point position, confidence and optional zone.
+     * @return local mutation result.
+     */
+    override suspend fun addWorldPoint(request: AddWorldPointDto): WorldPointMutationResponse {
+        return processor.addWorldPoint(request)
+    }
+
+    /**
+     * Deletes one local world point.
+     *
+     * @param pointId stable point identifier.
+     * @return local mutation result.
+     */
+    override suspend fun deleteWorldPoint(pointId: Long): WorldPointMutationResponse {
+        return processor.deleteWorldPoint(pointId)
+    }
+
+    /**
+     * Rotates one local point assignment between its four nearest zones.
+     *
+     * @param pointId stable point identifier.
+     * @return local mutation result.
+     */
+    override suspend fun rotateWorldPointZone(pointId: Long): WorldPointMutationResponse {
+        return processor.rotateWorldPointZone(pointId)
     }
 
     /**

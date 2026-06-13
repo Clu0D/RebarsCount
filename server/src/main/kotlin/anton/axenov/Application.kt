@@ -125,6 +125,24 @@ fun Application.module(
             call.respond(segmentationSessions.processorFor(sessionId).fetchWorldPoints())
         }
 
+        post("/world-points/add") {
+            val sessionId = call.sessionIdOrRespond() ?: return@post
+            val payload = call.receive<AddWorldPointDto>()
+            call.respond(segmentationSessions.processorFor(sessionId).addWorldPoint(payload))
+        }
+
+        post("/world-points/delete") {
+            val sessionId = call.sessionIdOrRespond() ?: return@post
+            val payload = call.receive<WorldPointIdDto>()
+            call.respond(segmentationSessions.processorFor(sessionId).deleteWorldPoint(payload.pointId))
+        }
+
+        post("/world-points/rotate-zone") {
+            val sessionId = call.sessionIdOrRespond() ?: return@post
+            val payload = call.receive<WorldPointIdDto>()
+            call.respond(segmentationSessions.processorFor(sessionId).rotateWorldPointZone(payload.pointId))
+        }
+
         post("/delete_request") {
             val sessionId = call.sessionIdOrRespond() ?: return@post
             val payload = call.receive<DeleteRequestDto>()
