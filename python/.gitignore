@@ -1,0 +1,7 @@
+__pycache__/
+export/__pycache__/
+results/
+dataset/original/
+dataset/train/
+dataset/predicted_masks/
+dataset/predicted_annotations/
