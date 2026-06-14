@@ -354,6 +354,7 @@ private fun Float.formatToDigits(digits: Int): String {
     return ((this * scale).roundToInt() / scale).toString()
 }
 
+@Suppress("DEPRECATION")
 private val openCvReady: Boolean by lazy {
     runCatching { OpenCVLoader.initDebug() }.getOrDefault(false)
 }

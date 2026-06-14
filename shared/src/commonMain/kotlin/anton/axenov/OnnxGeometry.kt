@@ -84,7 +84,7 @@ internal fun clipPolygon(
     if (subject.size < 3 || clip.size < 3) {
         return emptyList()
     }
-    var output = subject
+    var output: List<FloatImagePoint> = subject
     clip.indices.forEach { index ->
         val clipStart = clip[index]
         val clipEnd = clip[(index + 1) % clip.size]
@@ -92,21 +92,26 @@ internal fun clipPolygon(
             return emptyList()
         }
         val input = output
-        output = mutableListOf()
+        val nextOutput = mutableListOf<FloatImagePoint>()
         var previous = input.last()
         input.forEach { current ->
             val currentInside = isInsideHalfPlane(current, clipStart, clipEnd)
             val previousInside = isInsideHalfPlane(previous, clipStart, clipEnd)
             if (currentInside) {
                 if (!previousInside) {
-                    lineIntersection(previous, current, clipStart, clipEnd)?.let(output::add)
+                    lineIntersection(previous, current, clipStart, clipEnd)?.also { point ->
+                        nextOutput.add(point)
+                    }
                 }
-                output += current
+                nextOutput += current
             } else if (previousInside) {
-                lineIntersection(previous, current, clipStart, clipEnd)?.let(output::add)
+                lineIntersection(previous, current, clipStart, clipEnd)?.also { point ->
+                    nextOutput.add(point)
+                }
             }
             previous = current
         }
+        output = nextOutput
     }
     return output
 }

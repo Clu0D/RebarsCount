@@ -6,6 +6,7 @@ import java.util.IdentityHashMap
 import korlibs.math.geom.Quaternion
 import korlibs.math.geom.Vector3F
 import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
  * Stores per-zone snapshots captured from different viewing angles.
@@ -468,8 +469,8 @@ private fun generateGuidanceCandidateSamples(
         val planarScale = sqrt((1f - normalDot * normalDot).coerceAtLeast(0f))
         val candidateDirection =
             (normal * normalDot) +
-                (axisX * (kotlin.math.cos(azimuthRadians).toFloat() * planarScale)) +
-                (axisY * (kotlin.math.sin(azimuthRadians).toFloat() * planarScale))
+                (axisX * (kotlin.math.cos(azimuthRadians) * planarScale)) +
+                (axisY * (kotlin.math.sin(azimuthRadians) * planarScale))
         val candidatePosition = targetPosition + candidateDirection.normalized() * radiusMeters
         val sample = createGuidanceSample(
             zone = zone,

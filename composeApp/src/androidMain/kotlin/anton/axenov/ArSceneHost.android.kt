@@ -50,6 +50,8 @@ import com.google.ar.core.exceptions.UnavailableException
 import io.github.sceneview.ar.ARScene
 import anton.axenov.localServer.LocalClient
 import anton.axenov.localServer.createLocalPredictionProvider
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.cancel
