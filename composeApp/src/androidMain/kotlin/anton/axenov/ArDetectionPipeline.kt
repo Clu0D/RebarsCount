@@ -1354,16 +1354,6 @@ private data class SnapshotTargetZoneCandidate(
     val projectedPolygon: List<ImagePoint>,
 )
 
-private const val DETECTION_INTERVAL_MS = 2000L
-private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 3000L
-private const val FRAME_STATUS_INTERVAL_MS = 2000L
-private const val FRAME_FILTER_REPORT_INTERVAL_MS = 1000L
-private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 500L
-private const val SERVER_REFRESH_INTERVAL_MS = 1000L
-private const val MAX_ZONE_OCCLUSION_RATIO = 0.2f
-private const val WORLD_POINT_PICK_RADIUS_PX = 72f
-private const val ZONE_PICK_RADIUS_PX = 96f
-
 /**
  * Computes polygon area in screen pixels using the shoelace formula.
  *
@@ -1402,3 +1392,13 @@ private fun squaredScreenDistance(
     val dy = firstY - secondY
     return dx * dx + dy * dy
 }
+
+private const val DETECTION_INTERVAL_MS = 150L
+private const val CAPTURE_FAILURE_REPORT_INTERVAL_MS = 1000L
+private const val FRAME_STATUS_INTERVAL_MS = 250L
+private const val FRAME_FILTER_REPORT_INTERVAL_MS = 1000L
+private const val METRICS_LABEL_REFRESH_INTERVAL_MS = 250L
+private const val SERVER_REFRESH_INTERVAL_MS = 200L
+private const val MAX_ZONE_OCCLUSION_RATIO = 0.2f
+private const val WORLD_POINT_PICK_RADIUS_PX = 72f
+private const val ZONE_PICK_RADIUS_PX = 96f
