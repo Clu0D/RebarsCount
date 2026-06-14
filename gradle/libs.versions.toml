@@ -26,6 +26,7 @@ kotest = "5.9.1"
 mockk = "1.13.12"
 jts = "1.20.0"
 opencv = "4.10.0"
+onnxruntime = "1.22.0"
 
 [libraries]
 commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commonsMath3" }
@@ -68,6 +69,8 @@ kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 opencv = { module = "org.opencv:opencv", version.ref = "opencv" }
 jts-core = { module = "org.locationtech.jts:jts-core", version.ref = "jts" }
+onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

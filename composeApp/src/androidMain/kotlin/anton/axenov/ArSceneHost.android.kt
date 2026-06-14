@@ -191,6 +191,7 @@ actual fun ArSceneHost(
                 -> LocalClient(
                     sessionId = processingSessionId,
                     predictor = createLocalPredictionProvider(
+                        context = context,
                         pipeline = DEFAULT_LOCAL_PREDICTION_PIPELINE,
                         pythonBaseUrl = pythonSegmentationServerBaseUrl,
                     ),
@@ -734,5 +735,6 @@ private data class ArCoreSetupResult(
     val message: String,
 )
 
-private val DEFAULT_LOCAL_PREDICTION_PIPELINE = SegmentationPredictionPipeline.PYTHON
+private val DEFAULT_LOCAL_PREDICTION_PIPELINE =
+    SegmentationPredictionPipeline.YOLO_SEG_FOR_ZONES_AND_STARDIST_POINTS
 private const val STATUS_REPEAT_COOLDOWN_MS = 1000L

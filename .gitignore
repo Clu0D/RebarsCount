@@ -17,3 +17,11 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
+.tmp-kmath-for-real
+.tmp-kmath-opt
+.tmp-kmath-stat
+.tmp-multik-kotlin
+.gradle-home
+.tools/
+/server-debug/
+/StarDistToKotlin/

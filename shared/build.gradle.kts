@@ -27,6 +27,11 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.jts.core)
+            implementation(libs.onnxruntime.android)
+        }
+        jvmMain.dependencies {
+            implementation(libs.jts.core)
+            implementation(libs.onnxruntime)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

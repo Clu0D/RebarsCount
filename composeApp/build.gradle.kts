@@ -1,5 +1,6 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.api.GradleException
+import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
@@ -88,6 +89,8 @@ tasks.withType<Test>().configureEach {
 
 val filamentSourceAssetsDir = layout.projectDirectory.dir("src/androidMain/assets/materials")
 val filamentGeneratedAssetsDir = layout.buildDirectory.dir("generated/filament/materials")
+val onnxSourceAssetsDir = rootProject.layout.projectDirectory.dir("models/onnx")
+val onnxGeneratedAssetsDir = layout.buildDirectory.dir("generated/onnx/models/onnx")
 val defaultRepoMatcPath = rootProject.layout.projectDirectory.file(".tools/filament/1.68.2-host/filament/bin/matc").asFile.path
 val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")
@@ -106,6 +109,13 @@ val compileFilamentMaterials = tasks.register<CompileFilamentMaterialsTask>("com
     sourceDir.set(filamentSourceAssetsDir)
     outputDir.set(filamentGeneratedAssetsDir)
     configuredMatcPath.convention(filamentMatcPathProvider.orElse(""))
+}
+
+val syncOnnxModelAssets = tasks.register<Sync>("syncOnnxModelAssets") {
+    group = "build"
+    description = "Copies repository ONNX model files into Android assets."
+    from(onnxSourceAssetsDir)
+    into(onnxGeneratedAssetsDir)
 }
 
 android {
@@ -135,10 +145,12 @@ android {
     }
 
     sourceSets["main"].assets.srcDir(filamentGeneratedAssetsDir)
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/onnx"))
 }
 
 tasks.named("preBuild") {
     dependsOn(compileFilamentMaterials)
+    dependsOn(syncOnnxModelAssets)
 }
 
 dependencies {
