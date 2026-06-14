@@ -374,6 +374,6 @@ private data class ZoneMergeResult(
     val maxOverlapPercent: Float,
 )
 
-private const val BOX_INTERSECTION_THRESHOLD = 0.5f
+private const val BOX_INTERSECTION_THRESHOLD = 0.3f
 private const val MERGE_PLANE_MIN_POINT_COUNT = 3
 private const val MAX_PROJECTION_INPUTS_PER_MERGE = 10

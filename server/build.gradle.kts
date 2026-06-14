@@ -29,6 +29,7 @@ dependencies {
     testImplementation(libs.ktor.clientMock)
     testImplementation(libs.ktor.serializationKotlinxJson)
     testImplementation(libs.ktor.serverTestHost)
+    testImplementation(kotlin("test-junit5"))
     testImplementation(libs.kotest.runner.junit5)
     testImplementation(libs.kotest.assertions.core)
     testImplementation(libs.mockk)

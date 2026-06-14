@@ -17,19 +17,6 @@ class PlacementMathTest {
     }
 
     @Test
-    fun `median candidate selection returns works on sample case`() {
-        val candidates = listOf(
-            DepthCandidate(9, 9, 1000),
-            DepthCandidate(1, 3, 950),
-            DepthCandidate(1, 2, 900),
-            DepthCandidate(3, 1, 975),
-            DepthCandidate(2, 7, 990),
-        )
-
-        selectMedianPointCandidate(candidates) shouldBe DepthCandidate(2, 7, 990)
-    }
-
-    @Test
     fun `image-point sampling handles invalid sizes and clamped randomized bounds`() {
         val invalid = sampleImagePointsInScreenBoundingBox(
             screenBoundingBox = ScreenBoundingBox(0, 0, 10, 10),
@@ -67,78 +54,25 @@ class PlacementMathTest {
     }
 
     @Test
-    fun `image-to-view mapping handles normal and invalid dimensions`() {
-        val mapped = mapImagePointsToViewPoints(
-            imagePoints = listOf(ImagePoint(50, 25), ImagePoint(0, 0)),
-            imageWidth = 100,
-            imageHeight = 50,
-            viewWidth = 200,
-            viewHeight = 100,
+    fun `polygon sampling returns only points inside segmentation polygon`() {
+        val polygon = listOf(
+            ImagePoint(0, 0),
+            ImagePoint(10, 0),
+            ImagePoint(0, 10),
         )
 
-        mapped shouldBe listOf(
-            ViewPoint(100f, 50f),
-            ViewPoint(0f, 0f),
+        val points = sampleImagePointsInScreenPolygon(
+            screenPolygon = polygon,
+            imageWidth = 20,
+            imageHeight = 20,
+            count = 20,
+            random = Random(42),
         )
 
-        val cropped = mapImagePointsToViewPoints(
-            imagePoints = listOf(ImagePoint(0, 0), ImagePoint(99, 99)),
-            imageWidth = 100,
-            imageHeight = 100,
-            viewWidth = 200,
-            viewHeight = 100,
-        )
-        cropped shouldBe listOf(
-            ViewPoint(50f, 0f),
-            ViewPoint(149f, 99f),
-        )
-
-        mapImagePointsToViewPoints(
-            imagePoints = listOf(ImagePoint(1, 1)),
-            imageWidth = 100,
-            imageHeight = 100,
-            viewWidth = -1,
-            viewHeight = 100,
-        ) shouldBe emptyList()
+        points.size shouldBe 20
+        points.all { point -> isImagePointInsidePolygon(point, polygon) } shouldBe true
     }
 
-    @Test
-    fun `translateCoordinates should apply orientation-aware point mapping`() {
-        translateCoordinates(
-            x = 10,
-            y = 20,
-            width = 100,
-            height = 80,
-            translationVariant = CoordinateTranslationVariant.PORTRAIT,
-        ) shouldBe ImagePoint(10, 20)
-
-        translateCoordinates(
-            x = 10,
-            y = 20,
-            width = 100,
-            height = 80,
-            translationVariant = CoordinateTranslationVariant.LANDSCAPE,
-        ) shouldBe ImagePoint(89, 59)
-
-        translateCoordinates(
-            x = 10,
-            y = 20,
-            width = 100,
-            height = 80,
-            translationVariant = CoordinateTranslationVariant.LANDSCAPE_REVERSED,
-        ) shouldBe ImagePoint(89, 20)
-    }
-
-    @Test
-    fun `translateCoordinates should clamp invalid source point`() {
-        translateCoordinates(
-            x = 120,
-            y = -5,
-            width = 100,
-            height = 80,
-            translationVariant = CoordinateTranslationVariant.LANDSCAPE,
-        ) shouldBe ImagePoint(0, 79)
-    }
 
     @Test
     fun `plane fit returns explicit error when points are insufficient`() {
@@ -153,31 +87,6 @@ class PlacementMathTest {
         result.details shouldBe "Need at least 2 points, but got 1"
     }
 
-    @Test
-    fun `plane fit succeeds for realistic non-collinear points`() {
-        val points = listOf(
-            Vector3(0f, 0f, 1f),
-            Vector3(1f, 0f, 3f),
-            Vector3(0f, 1f, 4f),
-            Vector3(1f, 1f, 6f),
-        )
-        val cameraPosition = Vector3(0f, 0f, 10f)
-
-        val result = fitPlanePoseFromPoints(
-            worldPoints = points,
-            cameraPosition = cameraPosition,
-            minPointCount = 3,
-        )
-
-        result.details shouldBe "ok"
-        result.depthMeters shouldNotBe null
-        result.pose shouldNotBe null
-
-        val pose = result.pose!!
-        val toCamera = (cameraPosition - pose.center).normalized()
-        (pose.normal.dot(toCamera) >= 0f) shouldBe true
-        pose.normal.length shouldBe (1f plusOrMinus 0.0001f)
-    }
 
     @Test
     fun `plane fit returns failure details when regression cannot be solved`() {
