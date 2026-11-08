@@ -1,10 +1,10 @@
 # AR multi-frame rebar counter
 
+Master thesis in ITMO University.
+
 This repository contains a research prototype for counting steel reinforcing bars in bundles. An Android operator walks around the stock, captures each bundle from several angles, and reviews the reconstructed result directly in an augmented-reality scene.
 
 The main idea is to avoid treating every photo as an independent count. A single view often misses bar ends because of occlusion, uneven stacking, poor lighting, or limited physical access. The application therefore combines camera frames using ARCore tracking, segments bundles and individual bar ends, reconstructs observations in world coordinates, removes repeated detections, and reports a count for each bundle.
-
-The project accompanies [master-thesis.pdf](./master-thesis.pdf), which describes the motivation, algorithms, and experimental evaluation in detail. The current repository is a prototype: Android contains the complete AR workflow; the desktop and iOS targets currently display fallback screens only.
 
 ## What the application does
 
